@@ -50,3 +50,24 @@ uv run celery -A app.celery_app.celery_app worker -l info -Q default,parse,memor
 # Beat（定时）
 uv run celery -A app.celery_app.celery_app beat -l info
 ```
+
+## Elasticsearch 中文分词（IK）
+
+知识库的 BM25 全文检索依赖 IK 中文分词插件，否则中文按单字切，检索效果差。
+ES 容器基于官方镜像 + analysis-ik 插件构建（见 `docker/es/Dockerfile`）。
+
+首次启用或更新 IK 时需重建 ES 容器：
+
+```bash
+# 在项目根目录
+docker compose build elasticsearch
+docker compose up -d elasticsearch
+```
+
+`comet_chunks` 索引的 content 字段使用 ik_max_word（写入）/ ik_smart（查询）。
+若索引已用旧 mapping 创建过，需先删除让其按新 mapping 重建：
+
+```bash
+curl -X DELETE http://localhost:9200/comet_chunks
+# 重启后端会自动重建带 IK 的索引
+```

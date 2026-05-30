@@ -10,7 +10,7 @@ from app.db.elastic import get_es
 logger = get_logger(__name__)
 
 CHUNKS_INDEX = "comet_chunks"
-VECTOR_DIMS = 1024
+VECTOR_DIMS = settings.embedding_dims
 
 # 父子分块：child 用于向量召回，parent 提供更大上下文
 CHUNK_TYPE_CHILD = "child"
@@ -27,7 +27,12 @@ _MAPPING = {
             "chunk_id": {"type": "keyword"},
             "chunk_type": {"type": "keyword"},  # child | parent | image_desc
             "parent_id": {"type": "keyword"},  # child 指向其 parent chunk_id
-            "content": {"type": "text"},  # BM25 全文
+            # content 用 IK 中文分词：写入 ik_max_word（细粒度），查询 ik_smart（粗粒度）
+            "content": {
+                "type": "text",
+                "analyzer": "ik_max_word",
+                "search_analyzer": "ik_smart",
+            },
             "tags": {"type": "keyword"},
             "vector": {
                 "type": "dense_vector",

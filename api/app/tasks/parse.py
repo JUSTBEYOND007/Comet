@@ -14,6 +14,7 @@ from app.core.rag.parser import parse_document
 from app.core.llm.resolver import get_client_for_type
 from app.core.storage import get_storage
 from app.db.postgres import SessionLocal
+import app.models  # noqa: F401  确保所有 ORM 模型注册到 metadata
 from app.models.document_model import (
     DOC_STATUS_DONE,
     DOC_STATUS_FAILED,

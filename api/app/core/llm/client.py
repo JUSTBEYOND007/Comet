@@ -4,6 +4,7 @@
 """
 import httpx
 
+from app.config import settings
 from app.core.logging import get_logger
 
 logger = get_logger(__name__)
@@ -21,13 +22,25 @@ class LLMClient:
     def _headers(self) -> dict:
         return {"Authorization": f"Bearer {self.api_key}"}
 
-    async def embed(self, texts: list[str]) -> list[list[float]]:
-        """文本批量向量化。返回与输入等长的向量列表。"""
+    async def embed(
+        self, texts: list[str], dimensions: int | None = None
+    ) -> list[list[float]]:
+        """文本批量向量化。返回与输入等长的向量列表。
+
+        dimensions 控制输出维度（默认取 settings.embedding_dims），
+        与 ES 索引维度保持一致；支持指定维度的 provider（如智谱 embedding-3）会按此裁剪。
+        """
+        dims = dimensions or settings.embedding_dims
+        payload: dict = {
+            "model": self.model_name,
+            "input": texts,
+            "dimensions": dims,
+        }
         async with httpx.AsyncClient(timeout=60) as client:
             resp = await client.post(
                 f"{self.base_url}/embeddings",
                 headers=self._headers,
-                json={"model": self.model_name, "input": texts},
+                json=payload,
             )
             resp.raise_for_status()
             data = resp.json()
@@ -35,8 +48,8 @@ class LLMClient:
         items = sorted(data["data"], key=lambda x: x["index"])
         return [item["embedding"] for item in items]
 
-    async def embed_one(self, text: str) -> list[float]:
-        vecs = await self.embed([text])
+    async def embed_one(self, text: str, dimensions: int | None = None) -> list[float]:
+        vecs = await self.embed([text], dimensions=dimensions)
         return vecs[0]
 
     async def chat(

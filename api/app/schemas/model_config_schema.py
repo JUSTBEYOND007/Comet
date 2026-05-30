@@ -6,7 +6,7 @@ from typing import Literal
 from pydantic import BaseModel, ConfigDict, Field
 
 ModelTypeT = Literal["chat", "multimodal", "embedding", "rerank"]
-ProviderT = Literal["openai", "qwen", "doubao", "deepseek"]
+ProviderT = Literal["openai", "qwen", "doubao", "deepseek", "zhipu"]
 
 
 class ModelConfigCreate(BaseModel):

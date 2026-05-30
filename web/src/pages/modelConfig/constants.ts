@@ -19,6 +19,7 @@ export const PROVIDER_OPTIONS: { label: string; value: Provider }[] = [
   { label: '通义千问', value: 'qwen' },
   { label: '豆包', value: 'doubao' },
   { label: 'DeepSeek', value: 'deepseek' },
+  { label: '智谱', value: 'zhipu' },
 ]
 
 // 各 provider 默认 base_url，与后端 provider.py 保持一致
@@ -27,6 +28,7 @@ export const PROVIDER_DEFAULT_BASE_URL: Record<Provider, string> = {
   qwen: 'https://dashscope.aliyuncs.com/compatible-mode/v1',
   doubao: 'https://ark.cn-beijing.volces.com/api/v3',
   deepseek: 'https://api.deepseek.com/v1',
+  zhipu: 'https://open.bigmodel.cn/api/paas/v4',
 }
 
 export const CAPABILITY_OPTIONS = [

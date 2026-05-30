@@ -8,12 +8,15 @@
 """
 import httpx
 
+from app.config import settings
+
 # 各 provider 的默认 base_url（用户可覆盖）
 PROVIDER_DEFAULT_BASE_URL: dict[str, str] = {
     "openai": "https://api.openai.com/v1",
     "qwen": "https://dashscope.aliyuncs.com/compatible-mode/v1",
     "doubao": "https://ark.cn-beijing.volces.com/api/v3",
     "deepseek": "https://api.deepseek.com/v1",
+    "zhipu": "https://open.bigmodel.cn/api/paas/v4",
 }
 
 
@@ -29,7 +32,11 @@ async def test_connection(
                 resp = await client.post(
                     f"{base}/embeddings",
                     headers=headers,
-                    json={"model": model_name, "input": "ping"},
+                    json={
+                        "model": model_name,
+                        "input": "ping",
+                        "dimensions": settings.embedding_dims,
+                    },
                 )
             elif type_ == "rerank":
                 resp = await client.post(

@@ -78,6 +78,9 @@ class Settings(BaseSettings):
     log_backup_count: int = 5  # 轮转保留份数
     db_echo: bool = False  # 是否打印 SQL（调试用，默认关，避免日志刷屏）
 
+    # 知识库 RAG
+    embedding_dims: int = 1024  # 向量维度，ES 索引与 embed 调用统一用此值
+
     @property
     def database_url(self) -> str:
         return (

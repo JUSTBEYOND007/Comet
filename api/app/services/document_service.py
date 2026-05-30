@@ -95,9 +95,9 @@ class DocumentService:
         return doc
 
     async def list_documents(
-        self, user_id: uuid.UUID, page: int, page_size: int
+        self, user_id: uuid.UUID, page: int, page_size: int, tag: str | None = None
     ) -> tuple[list[Document], int]:
-        return await self.repo.list_paged(user_id, page, page_size)
+        return await self.repo.list_paged(user_id, page, page_size, tag)
 
     async def get_detail(self, user_id: uuid.UUID, doc_id: uuid.UUID) -> Document:
         return await self._get_or_404(user_id, doc_id)
@@ -134,7 +134,7 @@ class DocumentService:
         )
 
     async def to_out_dict(self, doc: Document) -> dict:
-        tags = await self.tag_repo.get_document_tag_names(doc.id)
+        tags = await self.tag_repo.get_document_tags(doc.id)
         return {
             "id": str(doc.id),
             "file_name": doc.file_name,

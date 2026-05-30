@@ -71,6 +71,34 @@ class LLMClient:
             data = resp.json()
         return data["choices"][0]["message"]["content"]
 
+    async def vision(
+        self, prompt: str, image_b64: str, mime: str = "image/jpeg", max_tokens: int = 1024
+    ) -> str:
+        """多模态看图：传入提示词 + base64 图片，返回模型描述文本。"""
+        data_url = f"data:{mime};base64,{image_b64}"
+        messages = [
+            {
+                "role": "user",
+                "content": [
+                    {"type": "text", "text": prompt},
+                    {"type": "image_url", "image_url": {"url": data_url}},
+                ],
+            }
+        ]
+        async with httpx.AsyncClient(timeout=120) as client:
+            resp = await client.post(
+                f"{self.base_url}/chat/completions",
+                headers=self._headers,
+                json={
+                    "model": self.model_name,
+                    "messages": messages,
+                    "max_tokens": max_tokens,
+                },
+            )
+            resp.raise_for_status()
+            data = resp.json()
+        return data["choices"][0]["message"]["content"]
+
     async def rerank(
         self, query: str, documents: list[str], top_n: int | None = None
     ) -> list[tuple[int, float]]:

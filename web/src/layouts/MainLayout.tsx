@@ -6,7 +6,9 @@ import {
   DeploymentUnitOutlined,
   HddOutlined,
   LogoutOutlined,
+  PictureOutlined,
   SettingOutlined,
+  TagsOutlined,
   UserOutlined,
 } from '@ant-design/icons'
 import { Outlet, useLocation, useNavigate } from 'react-router-dom'
@@ -19,8 +21,10 @@ const menuItems = [
   { key: '/', icon: <AppstoreOutlined />, label: '仪表盘' },
   { key: '/chat', icon: <CommentOutlined />, label: '对话' },
   { key: '/knowledge', icon: <BookOutlined />, label: '知识库' },
+  { key: '/images', icon: <PictureOutlined />, label: '图片库' },
   { key: '/memory', icon: <HddOutlined />, label: '记忆' },
   { key: '/graph', icon: <DeploymentUnitOutlined />, label: '知识图谱' },
+  { key: '/tags', icon: <TagsOutlined />, label: '标签管理' },
   { key: '/settings/models', icon: <SettingOutlined />, label: '模型配置' },
 ]
 

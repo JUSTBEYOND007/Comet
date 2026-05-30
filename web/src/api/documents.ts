@@ -8,6 +8,11 @@ interface Wrapped<T> {
 
 export type DocStatus = 'pending' | 'parsing' | 'done' | 'failed'
 
+export interface DocTag {
+  name: string
+  color: string
+}
+
 export interface DocumentItem {
   id: string
   file_name: string
@@ -19,7 +24,7 @@ export interface DocumentItem {
   progress: number
   chunk_num: number
   error_msg: string | null
-  tags: string[]
+  tags: DocTag[]
   created_at: string
 }
 
@@ -40,10 +45,10 @@ export interface SearchHit {
 }
 
 export const documentApi = {
-  list(page = 1, pageSize = 20) {
-    return client.get<unknown, Wrapped<DocumentListData>>(
-      `/documents?page=${page}&page_size=${pageSize}`,
-    )
+  list(page = 1, pageSize = 100, tag?: string) {
+    const q = new URLSearchParams({ page: String(page), page_size: String(pageSize) })
+    if (tag) q.set('tag', tag)
+    return client.get<unknown, Wrapped<DocumentListData>>(`/documents?${q.toString()}`)
   },
   // 上传文档（multipart）
   upload(file: File) {

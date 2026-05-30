@@ -7,6 +7,21 @@ export function formatSize(bytes: number): string {
   return `${(bytes / 1024 / 1024).toFixed(1)} MB`
 }
 
+/** 把带 created_at 的列表按 年-月-日 分组，返回 [{date, items}]，按日期倒序 */
+export function groupByDate<T extends { created_at: string }>(
+  items: T[],
+): { date: string; items: T[] }[] {
+  const map = new Map<string, T[]>()
+  for (const it of items) {
+    const d = it.created_at.slice(0, 10) // YYYY-MM-DD
+    if (!map.has(d)) map.set(d, [])
+    map.get(d)!.push(it)
+  }
+  return Array.from(map.entries())
+    .sort((a, b) => (a[0] < b[0] ? 1 : -1))
+    .map(([date, list]) => ({ date, items: list }))
+}
+
 const STATUS_META: Record<DocStatus, { color: string; text: string }> = {
   pending: { color: 'default', text: '待处理' },
   parsing: { color: 'processing', text: '解析中' },

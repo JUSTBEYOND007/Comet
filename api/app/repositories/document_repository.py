@@ -5,6 +5,7 @@ from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.document_model import Document
+from app.models.tag_model import Tag, document_tags
 
 
 class DocumentRepository:
@@ -30,9 +31,20 @@ class DocumentRepository:
         return await self.session.get(Document, doc_id)
 
     async def list_paged(
-        self, user_id: uuid.UUID, page: int, page_size: int
+        self,
+        user_id: uuid.UUID,
+        page: int,
+        page_size: int,
+        tag: str | None = None,
     ) -> tuple[list[Document], int]:
         base = select(Document).where(Document.user_id == user_id)
+        if tag:
+            # 按标签名过滤：join 关联表 + tags 表
+            base = (
+                base.join(document_tags, Document.id == document_tags.c.document_id)
+                .join(Tag, Tag.id == document_tags.c.tag_id)
+                .where(Tag.user_id == user_id, Tag.name == tag)
+            )
         total = await self.session.scalar(
             select(func.count()).select_from(base.subquery())
         )

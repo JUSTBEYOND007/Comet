@@ -41,11 +41,12 @@ async def import_from_url(
 async def list_documents(
     page: int = Query(default=1, ge=1),
     page_size: int = Query(default=20, ge=1, le=100),
+    tag: str | None = Query(default=None, description="按标签名筛选"),
     user: User = Depends(get_current_user),
     session: AsyncSession = Depends(get_session),
 ):
     service = DocumentService(session)
-    docs, total = await service.list_documents(user.id, page, page_size)
+    docs, total = await service.list_documents(user.id, page, page_size, tag)
     items = [await service.to_out_dict(d) for d in docs]
     return success(
         {"total": total, "page": page, "page_size": page_size, "items": items}

@@ -11,11 +11,17 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 import app.models  # noqa: F401  确保所有 ORM 模型注册到 metadata
 from app.celery_app import celery_app
-from app.core.llm.resolver import get_client_for_type
+from app.core.llm.resolver import get_client_for_type, get_optional_client_for_type
 from app.core.logging import get_logger
 from app.core.rag.chunker import chunk_parent_child
+from app.core.rag.classifier import classify_content
 from app.core.rag.es_index import CHUNK_TYPE_CHILD, CHUNK_TYPE_PARENT
-from app.core.rag.es_store import build_chunk_doc, bulk_index, delete_by_source
+from app.core.rag.es_store import (
+    build_chunk_doc,
+    bulk_index,
+    delete_by_source,
+    update_tags_by_source,
+)
 from app.core.rag.parser import parse_document
 from app.core.storage import get_storage
 from app.db import elastic
@@ -26,6 +32,7 @@ from app.models.document_model import (
     DOC_STATUS_PARSING,
 )
 from app.repositories.document_repository import DocumentRepository
+from app.repositories.tag_repository import TagRepository
 
 logger = get_logger(__name__)
 
@@ -110,6 +117,9 @@ async def _parse(session: AsyncSession, document_id: str, doc_uuid: uuid.UUID) -
         await delete_by_source(user_id, document_id)
         await bulk_index(es_docs)
 
+        # 6. AI 自动分类打标签（有对话模型才做，失败不阻断）
+        await _auto_tag(session, doc, text)
+
         doc.status = DOC_STATUS_DONE
         doc.progress = 1.0
         doc.chunk_num = chunk_total
@@ -121,6 +131,24 @@ async def _parse(session: AsyncSession, document_id: str, doc_uuid: uuid.UUID) -
         doc.status = DOC_STATUS_FAILED
         doc.error_msg = str(e)[:500]
         await repo.save(doc)
+
+
+async def _auto_tag(session: AsyncSession, doc, text: str) -> None:
+    """用对话模型给文档分类，写回 PG（关联）与 ES（chunk tags）。"""
+    chat_client = await get_optional_client_for_type(session, doc.user_id, "chat")
+    if not chat_client:
+        return
+    tag_repo = TagRepository(session)
+    existing = [t.name for t in await tag_repo.list_by_user(doc.user_id)]
+    tag_names = await classify_content(chat_client, text, existing)
+    if not tag_names:
+        return
+    tag_ids = []
+    for name in tag_names:
+        tag = await tag_repo.get_or_create(doc.user_id, name)
+        tag_ids.append(tag.id)
+    await tag_repo.set_document_tags(doc.id, tag_ids)
+    await update_tags_by_source(str(doc.user_id), str(doc.id), tag_names)
 
 
 @celery_app.task(name="app.tasks.parse.parse_document")

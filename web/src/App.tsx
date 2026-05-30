@@ -3,6 +3,7 @@ import MainLayout from './layouts/MainLayout'
 import HomePage from './pages/HomePage'
 import LoginPage from './pages/LoginPage'
 import ModelConfigPage from './pages/ModelConfigPage'
+import KnowledgePage from './pages/KnowledgePage'
 import RequireAuth from './components/RequireAuth'
 
 // 阶段1：登录页 + 路由守卫；主布局需登录后访问
@@ -20,6 +21,7 @@ export default function App() {
           }
         >
           <Route index element={<HomePage />} />
+          <Route path="knowledge" element={<KnowledgePage />} />
           <Route path="settings/models" element={<ModelConfigPage />} />
         </Route>
         <Route path="*" element={<Navigate to="/" replace />} />

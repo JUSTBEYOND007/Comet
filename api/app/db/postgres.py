@@ -65,5 +65,27 @@ def get_pool_status() -> dict:
     }
 
 
+def create_task_engine():
+    """为 Celery 任务创建独立引擎（绑定当前事件循环，用完即弃）。
+
+    Celery 每个任务用新的 asyncio 事件循环，全局单例引擎的连接池会绑定到
+    已关闭的旧循环导致报错，故任务内用独立引擎 + NullPool（不缓存连接）。
+    """
+    from sqlalchemy.pool import NullPool
+
+    return create_async_engine(
+        settings.database_url,
+        echo=settings.db_echo,
+        future=True,
+        poolclass=NullPool,
+        connect_args={
+            "server_settings": {
+                "timezone": "UTC",
+                "statement_timeout": str(settings.db_statement_timeout_ms),
+            }
+        },
+    )
+
+
 async def close() -> None:
     await engine.dispose()

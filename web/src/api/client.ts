@@ -25,6 +25,14 @@ client.interceptors.response.use(
     return body
   },
   (error) => {
+    // 401：token 失效/未登录，清除本地登录态并跳登录页
+    if (error.response?.status === 401) {
+      localStorage.removeItem('access_token')
+      localStorage.removeItem('refresh_token')
+      if (!window.location.pathname.startsWith('/login')) {
+        window.location.href = '/login'
+      }
+    }
     const message =
       error.response?.data?.message || error.message || '网络错误'
     return Promise.reject(new Error(message))

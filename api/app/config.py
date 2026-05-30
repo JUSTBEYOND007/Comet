@@ -47,7 +47,14 @@ class Settings(BaseSettings):
     celery_result_backend: str = "redis://localhost:6379/2"
 
     # 文件存储
+    storage_backend: str = "local"  # local | oss
     storage_dir: str = "./storage"
+
+    # 阿里云 OSS
+    oss_endpoint: str = ""
+    oss_access_key_id: str = ""
+    oss_access_key_secret: str = ""
+    oss_bucket_name: str = ""
 
     @property
     def database_url(self) -> str:

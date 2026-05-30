@@ -1,13 +1,23 @@
 import { BrowserRouter, Navigate, Route, Routes } from 'react-router-dom'
 import MainLayout from './layouts/MainLayout'
 import HomePage from './pages/HomePage'
+import LoginPage from './pages/LoginPage'
+import RequireAuth from './components/RequireAuth'
 
-// 阶段0骨架路由：后续各阶段在此补充 对话/知识库/记忆/图谱 等页面
+// 阶段1：登录页 + 路由守卫；主布局需登录后访问
 export default function App() {
   return (
     <BrowserRouter>
       <Routes>
-        <Route path="/" element={<MainLayout />}>
+        <Route path="/login" element={<LoginPage />} />
+        <Route
+          path="/"
+          element={
+            <RequireAuth>
+              <MainLayout />
+            </RequireAuth>
+          }
+        >
           <Route index element={<HomePage />} />
         </Route>
         <Route path="*" element={<Navigate to="/" replace />} />

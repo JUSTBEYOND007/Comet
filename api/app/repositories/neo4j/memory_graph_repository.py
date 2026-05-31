@@ -256,3 +256,103 @@ class MemoryGraphRepository:
         """删除某用户的全部图数据（数据隔离 / 重置用）。"""
         async with self._driver.session() as session:
             await session.run(cq.DELETE_USER_GRAPH, user_id=user_id)
+
+    async def merge_duplicate_entities(self, user_id: str) -> int:
+        """合并历史重复实体（同 user_id + 同名(忽略大小写) + 同类型）。
+
+        取最早创建的为保留方，把其余重复节点的 MENTIONS/INVOLVES/RELATION 边
+        改接到保留方，合并别名与描述后删除重复节点。返回被删除的重复节点数。
+        """
+        removed = 0
+
+        async def _txn(tx):
+            nonlocal removed
+            result = await tx.run(cq.DUPLICATE_ENTITY_GROUPS, user_id=user_id)
+            groups = [dict(r) async for r in result]
+            for g in groups:
+                ids: list[str] = g["ids"]
+                keeper_id = ids[0]
+                dup_ids = ids[1:]
+                if not dup_ids:
+                    continue
+                # 合并别名：保留方名 + 所有节点名/别名（去掉保留方自身名）
+                names: list[str] = g.get("names") or []
+                aliases_list: list[list] = g.get("aliases_list") or []
+                keeper_name = names[0] if names else ""
+                alias_set: set[str] = set()
+                for nm in names[1:]:
+                    if nm:
+                        alias_set.add(nm)
+                for al in aliases_list:
+                    for a in al or []:
+                        if a:
+                            alias_set.add(a)
+                alias_set.discard(keeper_name)
+                # 描述取最长
+                descs = [d for d in (g.get("descs") or []) if d]
+                description = max(descs, key=len) if descs else ""
+
+                await tx.run(
+                    cq.DEDUP_REDIRECT_MENTIONS, user_id=user_id,
+                    keeper_id=keeper_id, dup_ids=dup_ids,
+                )
+                await tx.run(
+                    cq.DEDUP_REDIRECT_INVOLVES, user_id=user_id,
+                    keeper_id=keeper_id, dup_ids=dup_ids,
+                )
+                await tx.run(
+                    cq.DEDUP_REDIRECT_RELATION_OUT, user_id=user_id,
+                    keeper_id=keeper_id, dup_ids=dup_ids,
+                )
+                await tx.run(
+                    cq.DEDUP_REDIRECT_RELATION_IN, user_id=user_id,
+                    keeper_id=keeper_id, dup_ids=dup_ids,
+                )
+                await tx.run(
+                    cq.DEDUP_UPDATE_KEEPER, user_id=user_id, keeper_id=keeper_id,
+                    aliases=sorted(alias_set), description=description,
+                )
+                await tx.run(
+                    cq.DEDUP_DELETE_DUPS, user_id=user_id, dup_ids=dup_ids,
+                )
+                removed += len(dup_ids)
+
+        async with self._driver.session() as session:
+            await session.execute_write(_txn)
+        logger.info("重复实体合并完成: user=%s removed=%d", user_id, removed)
+        return removed
+
+    # ── 知识图谱可视化 / 时间线（阶段8）──
+
+    async def graph_nodes(self, user_id: str) -> list[dict[str, Any]]:
+        """全量实体节点。"""
+        async with self._driver.session() as session:
+            result = await session.run(cq.GRAPH_NODES, user_id=user_id)
+            return [dict(r) async for r in result]
+
+    async def graph_edges(self, user_id: str) -> list[dict[str, Any]]:
+        """全量实体间关系边。"""
+        async with self._driver.session() as session:
+            result = await session.run(cq.GRAPH_EDGES, user_id=user_id)
+            return [dict(r) async for r in result]
+
+    async def entity_subgraph(
+        self, user_id: str, entity_id: str
+    ) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+        """单实体一跳子图（中心+邻居 与 它们之间的关系）。"""
+        async with self._driver.session() as session:
+            nres = await session.run(
+                cq.ENTITY_SUBGRAPH_NODES, user_id=user_id, entity_id=entity_id
+            )
+            nodes = [dict(r) async for r in nres]
+            eres = await session.run(
+                cq.ENTITY_SUBGRAPH_EDGES, user_id=user_id, entity_id=entity_id
+            )
+            edges = [dict(r) async for r in eres]
+            return nodes, edges
+
+    async def event_timeline(self, user_id: str) -> list[dict[str, Any]]:
+        """事件时间线（按 event_time 倒序）。"""
+        async with self._driver.session() as session:
+            result = await session.run(cq.EVENT_TIMELINE, user_id=user_id)
+            return [dict(r) async for r in result]

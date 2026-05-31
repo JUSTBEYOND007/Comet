@@ -7,8 +7,27 @@ from app.core.response import success
 from app.db.postgres import get_session
 from app.models.user_model import User
 from app.services.daily_review_service import DailyReviewService
+from app.services.dashboard_service import DashboardService
 
 router = APIRouter(prefix="/dashboard", tags=["dashboard"])
+
+
+@router.get("/overview")
+async def overview(
+    user: User = Depends(get_current_user),
+    session: AsyncSession = Depends(get_session),
+):
+    """概览统计：各类计数 + 标签分布 + 最近活动。"""
+    return success(await DashboardService(session).overview(user.id))
+
+
+@router.get("/memory-stats")
+async def memory_stats(
+    user: User = Depends(get_current_user),
+    session: AsyncSession = Depends(get_session),
+):
+    """记忆统计：新增趋势 + 社区分布。"""
+    return success(await DashboardService(session).memory_stats(user.id))
 
 
 @router.get("/daily-review")

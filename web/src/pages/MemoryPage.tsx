@@ -15,24 +15,30 @@ import {
 } from 'antd'
 import {
   BulbOutlined,
+  ClockCircleOutlined,
+  ClusterOutlined,
   DeleteOutlined,
   PlusOutlined,
+  ReloadOutlined,
   SearchOutlined,
   StarFilled,
   StarOutlined,
 } from '@ant-design/icons'
 import {
   memoryApi,
+  type Community,
+  type CommunityMember,
   type MemoryHit,
   type MemoryProfile,
   type ProfileEntity,
+  type TimelineEvent,
 } from '@/api/memories'
 import { favoriteApi } from '@/api/favorites'
 
 const { Text, Paragraph } = Typography
 
 export default function MemoryPage() {
-  const [mode, setMode] = useState<'profile' | 'search'>('profile')
+  const [mode, setMode] = useState<'profile' | 'community' | 'timeline' | 'search'>('profile')
 
   return (
     <div className="fluid-page">
@@ -41,15 +47,25 @@ export default function MemoryPage() {
         extra={
           <Segmented
             value={mode}
-            onChange={(v) => setMode(v as 'profile' | 'search')}
+            onChange={(v) => setMode(v as 'profile' | 'community' | 'timeline' | 'search')}
             options={[
               { label: '我的画像', value: 'profile', icon: <BulbOutlined /> },
+              { label: '主题社区', value: 'community', icon: <ClusterOutlined /> },
+              { label: '时间线', value: 'timeline', icon: <ClockCircleOutlined /> },
               { label: '记忆检索', value: 'search', icon: <SearchOutlined /> },
             ]}
           />
         }
       >
-        {mode === 'profile' ? <ProfilePanel /> : <SearchPanel />}
+        {mode === 'profile' ? (
+          <ProfilePanel />
+        ) : mode === 'community' ? (
+          <CommunityPanel />
+        ) : mode === 'timeline' ? (
+          <TimelinePanel />
+        ) : (
+          <SearchPanel />
+        )}
       </Card>
     </div>
   )
@@ -356,5 +372,204 @@ function SearchPanel() {
         </Space>
       )}
     </Space>
+  )
+}
+
+
+// ── 主题社区：社区卡片 + 展开看成员实体 ──
+function CommunityPanel() {
+  const [communities, setCommunities] = useState<Community[]>([])
+  const [loading, setLoading] = useState(false)
+  const [reclustering, setReclustering] = useState(false)
+  const [expanded, setExpanded] = useState<string | null>(null)
+  const [members, setMembers] = useState<Record<string, CommunityMember[]>>({})
+
+  const load = async () => {
+    setLoading(true)
+    try {
+      const { data } = await memoryApi.communities()
+      setCommunities(data)
+    } catch (e) {
+      message.error((e as Error).message)
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  useEffect(() => {
+    load()
+  }, [])
+
+  const onRecluster = async () => {
+    setReclustering(true)
+    try {
+      await memoryApi.recluster()
+      message.success('聚类完成')
+      load()
+    } catch (e) {
+      message.error((e as Error).message)
+    } finally {
+      setReclustering(false)
+    }
+  }
+
+  const toggle = async (id: string) => {
+    if (expanded === id) {
+      setExpanded(null)
+      return
+    }
+    setExpanded(id)
+    if (!members[id]) {
+      try {
+        const { data } = await memoryApi.communityMembers(id)
+        setMembers((prev) => ({ ...prev, [id]: data }))
+      } catch (e) {
+        message.error((e as Error).message)
+      }
+    }
+  }
+
+  return (
+    <Space direction="vertical" size="large" style={{ width: '100%' }}>
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+        <Text type="secondary">
+          相关实体自动聚成主题社区，反映你记忆里的知识结构
+        </Text>
+        <Button icon={<ReloadOutlined />} loading={reclustering} onClick={onRecluster}>
+          重新聚类
+        </Button>
+      </div>
+
+      {loading ? (
+        <div style={{ textAlign: 'center', padding: 40 }}>
+          <Spin />
+        </div>
+      ) : communities.length === 0 ? (
+        <Empty description="还没有社区。记忆积累后会自动聚类，或点「重新聚类」" />
+      ) : (
+        <div
+          style={{
+            display: 'grid',
+            gridTemplateColumns: 'repeat(auto-fill, minmax(18rem, 1fr))',
+            gap: 12,
+          }}
+        >
+          {communities.map((c) => (
+            <Card
+              key={c.id}
+              size="small"
+              hoverable
+              styles={{ body: { padding: 14 } }}
+              onClick={() => toggle(c.id)}
+            >
+              <Space style={{ marginBottom: 4 }}>
+                <Text strong style={{ fontSize: 15 }}>{c.name}</Text>
+                <Tag color="purple">{c.member_count} 个实体</Tag>
+              </Space>
+              <Paragraph type="secondary" style={{ margin: 0, fontSize: 13 }} ellipsis={{ rows: 2 }}>
+                {c.summary}
+              </Paragraph>
+              {expanded === c.id && members[c.id] && (
+                <div style={{ marginTop: 10, paddingTop: 10, borderTop: '1px solid #F0F0F0' }}>
+                  {members[c.id].map((m) => (
+                    <div key={m.id} style={{ fontSize: 13, marginBottom: 4 }}>
+                      <Text strong>{m.name}</Text>{' '}
+                      <Tag>{m.type}</Tag>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </Card>
+          ))}
+        </div>
+      )}
+    </Space>
+  )
+}
+
+
+// ── 时间线：事件按时间倒序竖线展示 ──
+function TimelinePanel() {
+  const [events, setEvents] = useState<TimelineEvent[]>([])
+  const [loading, setLoading] = useState(false)
+
+  useEffect(() => {
+    setLoading(true)
+    memoryApi
+      .timeline()
+      .then(({ data }) => setEvents(data))
+      .catch((e) => message.error((e as Error).message))
+      .finally(() => setLoading(false))
+  }, [])
+
+  const fmt = (ev: TimelineEvent) => {
+    const raw = ev.event_time || ev.created_at
+    if (!raw) return '时间未知'
+    const d = new Date(raw)
+    if (Number.isNaN(d.getTime())) return String(raw)
+    return d.toLocaleDateString('zh-CN', { year: 'numeric', month: 'long', day: 'numeric' })
+  }
+
+  if (loading) {
+    return (
+      <div style={{ textAlign: 'center', padding: 40 }}>
+        <Spin />
+      </div>
+    )
+  }
+
+  if (events.length === 0) {
+    return <Empty description="还没有事件。在对话或主动记住中提到带时间的经历，会自动记入时间线" />
+  }
+
+  return (
+    <div style={{ paddingLeft: 8 }}>
+      {events.map((ev) => (
+        <div
+          key={ev.id}
+          style={{
+            position: 'relative',
+            paddingLeft: 24,
+            paddingBottom: 20,
+            borderLeft: '2px solid #EEF4FF',
+          }}
+        >
+          <span
+            style={{
+              position: 'absolute',
+              left: -7,
+              top: 2,
+              width: 12,
+              height: 12,
+              borderRadius: '50%',
+              background: '#155EEF',
+              border: '2px solid #fff',
+            }}
+          />
+          <Text type="secondary" style={{ fontSize: 13 }}>
+            {fmt(ev)}
+          </Text>
+          <div style={{ margin: '2px 0 4px' }}>
+            <Text strong style={{ fontSize: 15 }}>
+              {ev.title}
+            </Text>
+          </div>
+          {ev.description && (
+            <Paragraph type="secondary" style={{ margin: '0 0 6px', fontSize: 13.5 }}>
+              {ev.description}
+            </Paragraph>
+          )}
+          {ev.participants.length > 0 && (
+            <Space size={4} wrap>
+              {ev.participants.map((p) => (
+                <Tag key={p.id} color="blue" style={{ fontSize: 12 }}>
+                  {p.name}
+                </Tag>
+              ))}
+            </Space>
+          )}
+        </div>
+      ))}
+    </div>
   )
 }

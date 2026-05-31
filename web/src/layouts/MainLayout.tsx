@@ -16,6 +16,7 @@ import {
 } from '@ant-design/icons'
 import { Outlet, useLocation, useNavigate } from 'react-router-dom'
 import { useAuthStore } from '@/stores/authStore'
+import logo from '@/images/logo.png'
 
 const { Sider, Content, Header } = Layout
 
@@ -91,22 +92,11 @@ export default function MainLayout() {
             color: '#171719',
           }}
         >
-          <div
-            style={{
-              width: 36,
-              height: 36,
-              borderRadius: 9,
-              background: 'linear-gradient(135deg, #155EEF, #5B8DEF)',
-              display: 'flex',
-              alignItems: 'center',
-              justifyContent: 'center',
-              fontWeight: 700,
-              fontSize: 19,
-              color: '#fff',
-            }}
-          >
-            彗
-          </div>
+          <img
+            src={logo}
+            alt="彗记"
+            style={{ width: 36, height: 36, borderRadius: 9, objectFit: 'cover' }}
+          />
           <span style={{ fontWeight: 600, fontSize: 19 }}>彗记 Comet</span>
         </div>
         <div style={{ flex: 1, overflowY: 'auto', paddingBottom: 12 }}>

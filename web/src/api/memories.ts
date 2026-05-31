@@ -78,6 +78,65 @@ export interface MemoryProfile {
   groups: ProfileGroup[]
 }
 
+export interface Community {
+  id: string
+  name: string
+  summary: string
+  member_count: number
+}
+
+export interface CommunityMember {
+  id: string
+  name: string
+  type: string
+  description: string
+  aliases: string[]
+}
+
+// 知识图谱
+export interface GraphNode {
+  id: string
+  name: string
+  type: string
+  description: string
+  community_id: string | null
+}
+
+export interface GraphEdge {
+  source: string
+  target: string
+  predicate: string
+  predicate_surface: string
+}
+
+export interface GraphData {
+  nodes: GraphNode[]
+  edges: GraphEdge[]
+  communities: Community[]
+}
+
+export interface EntitySubgraph {
+  center: string
+  nodes: GraphNode[]
+  edges: GraphEdge[]
+}
+
+// 事件时间线
+export interface TimelineParticipant {
+  id: string
+  name: string
+  type: string
+}
+
+export interface TimelineEvent {
+  id: string
+  title: string
+  description: string
+  event_time: string | null
+  created_at: string | null
+  participants: TimelineParticipant[]
+}
+
 export const memoryApi = {
   remember(text: string) {
     return client.post<unknown, Wrapped<MemoryItem>>('/memories/remember', { text })
@@ -87,6 +146,27 @@ export const memoryApi = {
   },
   deleteEntity(entityId: string) {
     return client.delete<unknown, Wrapped<null>>(`/memories/entity/${entityId}`)
+  },
+  communities() {
+    return client.get<unknown, Wrapped<Community[]>>('/memories/communities')
+  },
+  communityMembers(id: string) {
+    return client.get<unknown, Wrapped<CommunityMember[]>>(`/memories/communities/${id}`)
+  },
+  recluster() {
+    return client.post<unknown, Wrapped<null>>('/memories/recluster')
+  },
+  mergeDuplicates() {
+    return client.post<unknown, Wrapped<{ removed: number }>>('/memories/merge-duplicates')
+  },
+  graph() {
+    return client.get<unknown, Wrapped<GraphData>>('/memories/graph')
+  },
+  entitySubgraph(id: string) {
+    return client.get<unknown, Wrapped<EntitySubgraph>>(`/memories/graph/entity/${id}`)
+  },
+  timeline() {
+    return client.get<unknown, Wrapped<TimelineEvent[]>>('/memories/timeline')
   },
   list(page = 1, pageSize = 20) {
     const q = new URLSearchParams({ page: String(page), page_size: String(pageSize) })

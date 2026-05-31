@@ -109,6 +109,140 @@ class MemoryService:
 
         await MemoryGraphRepository().delete_entity(str(user_id), entity_id)
 
+    async def list_communities(self, user_id: uuid.UUID) -> list[dict]:
+        """社区列表（名称/摘要/成员数）。"""
+        from app.repositories.neo4j.community_repository import CommunityRepository
+
+        return await CommunityRepository().list_communities(str(user_id))
+
+    async def community_members(
+        self, user_id: uuid.UUID, community_id: str
+    ) -> list[dict]:
+        """某社区的成员实体。"""
+        from app.repositories.neo4j.community_repository import CommunityRepository
+
+        members = await CommunityRepository().get_members(str(user_id), community_id)
+        return [
+            {
+                "id": m.get("id"),
+                "name": m.get("name"),
+                "type": m.get("type"),
+                "description": m.get("description") or "",
+                "aliases": m.get("aliases") or [],
+            }
+            for m in members
+        ]
+
+    async def recluster(self, user_id: uuid.UUID) -> None:
+        """手动触发全量社区聚类（先合并历史重复实体，再聚类）。"""
+        from app.core.llm.resolver import get_optional_client_for_type
+        from app.core.memory.clustering.label_propagation import (
+            LabelPropagationEngine,
+        )
+
+        await self.merge_duplicates(user_id)
+        chat_client = await get_optional_client_for_type(self.session, user_id, "chat")
+        await LabelPropagationEngine(chat_client=chat_client).full_clustering(
+            str(user_id)
+        )
+
+    async def merge_duplicates(self, user_id: uuid.UUID) -> int:
+        """合并历史重复实体（同名同类型只保留一个图节点）。"""
+        from app.repositories.neo4j.memory_graph_repository import (
+            MemoryGraphRepository,
+        )
+
+        return await MemoryGraphRepository().merge_duplicate_entities(str(user_id))
+
+    async def get_graph(self, user_id: uuid.UUID) -> dict:
+        """知识图谱全量数据：nodes（实体）+ edges（关系）+ communities。"""
+        from app.repositories.neo4j.community_repository import CommunityRepository
+        from app.repositories.neo4j.memory_graph_repository import (
+            MemoryGraphRepository,
+        )
+
+        uid = str(user_id)
+        repo = MemoryGraphRepository()
+        raw_nodes = await repo.graph_nodes(uid)
+        raw_edges = await repo.graph_edges(uid)
+        communities = await CommunityRepository().list_communities(uid)
+
+        nodes = [
+            {
+                "id": n.get("id"),
+                "name": n.get("name"),
+                "type": n.get("type"),
+                "description": n.get("description") or "",
+                "community_id": n.get("community_id"),
+            }
+            for n in raw_nodes
+        ]
+        edges = [
+            {
+                "source": e.get("source"),
+                "target": e.get("target"),
+                "predicate": e.get("predicate") or "",
+                "predicate_surface": e.get("predicate_surface") or "",
+            }
+            for e in raw_edges
+            if e.get("source") and e.get("target")
+        ]
+        return {
+            "nodes": nodes,
+            "edges": edges,
+            "communities": communities,
+        }
+
+    async def get_entity_subgraph(self, user_id: uuid.UUID, entity_id: str) -> dict:
+        """单实体一跳子图。"""
+        from app.repositories.neo4j.memory_graph_repository import (
+            MemoryGraphRepository,
+        )
+
+        raw_nodes, raw_edges = await MemoryGraphRepository().entity_subgraph(
+            str(user_id), entity_id
+        )
+        nodes = [
+            {
+                "id": n.get("id"),
+                "name": n.get("name"),
+                "type": n.get("type"),
+                "description": n.get("description") or "",
+                "community_id": n.get("community_id"),
+            }
+            for n in raw_nodes
+        ]
+        edges = [
+            {
+                "source": e.get("source"),
+                "target": e.get("target"),
+                "predicate": e.get("predicate") or "",
+                "predicate_surface": e.get("predicate_surface") or "",
+            }
+            for e in raw_edges
+            if e.get("source") and e.get("target")
+        ]
+        return {"center": entity_id, "nodes": nodes, "edges": edges}
+
+    async def get_timeline(self, user_id: uuid.UUID) -> list[dict]:
+        """事件时间线（按 event_time 倒序）。"""
+        from app.repositories.neo4j.memory_graph_repository import (
+            MemoryGraphRepository,
+        )
+
+        rows = await MemoryGraphRepository().event_timeline(str(user_id))
+        return [
+            {
+                "id": r.get("id"),
+                "title": r.get("title"),
+                "description": r.get("description") or "",
+                "event_time": r.get("event_time"),
+                "created_at": r.get("created_at"),
+                "participants": r.get("participants") or [],
+            }
+            for r in rows
+        ]
+
     @staticmethod
     def to_out_dict(memory: Memory) -> dict:
         return {

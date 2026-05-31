@@ -59,6 +59,73 @@ async def delete_entity(
     return success(message="删除成功")
 
 
+@router.get("/communities")
+async def list_communities(
+    user: User = Depends(get_current_user),
+    session: AsyncSession = Depends(get_session),
+):
+    """社区列表（名称/摘要/成员数）。"""
+    return success(await MemoryService(session).list_communities(user.id))
+
+
+@router.get("/communities/{community_id}")
+async def community_members(
+    community_id: str,
+    user: User = Depends(get_current_user),
+    session: AsyncSession = Depends(get_session),
+):
+    """某社区的成员实体。"""
+    return success(await MemoryService(session).community_members(user.id, community_id))
+
+
+@router.post("/recluster")
+async def recluster(
+    user: User = Depends(get_current_user),
+    session: AsyncSession = Depends(get_session),
+):
+    """手动触发全量社区聚类。"""
+    await MemoryService(session).recluster(user.id)
+    return success(message="聚类完成")
+
+
+@router.post("/merge-duplicates")
+async def merge_duplicates(
+    user: User = Depends(get_current_user),
+    session: AsyncSession = Depends(get_session),
+):
+    """合并历史重复实体（同名同类型只保留一个图节点）。"""
+    removed = await MemoryService(session).merge_duplicates(user.id)
+    return success({"removed": removed}, f"已合并 {removed} 个重复实体")
+
+
+@router.get("/graph")
+async def get_graph(
+    user: User = Depends(get_current_user),
+    session: AsyncSession = Depends(get_session),
+):
+    """知识图谱全量数据：实体节点 + 关系边 + 社区。"""
+    return success(await MemoryService(session).get_graph(user.id))
+
+
+@router.get("/graph/entity/{entity_id}")
+async def get_entity_subgraph(
+    entity_id: str,
+    user: User = Depends(get_current_user),
+    session: AsyncSession = Depends(get_session),
+):
+    """单实体一跳邻居子图。"""
+    return success(await MemoryService(session).get_entity_subgraph(user.id, entity_id))
+
+
+@router.get("/timeline")
+async def get_timeline(
+    user: User = Depends(get_current_user),
+    session: AsyncSession = Depends(get_session),
+):
+    """事件时间线（按事件时间倒序）。"""
+    return success(await MemoryService(session).get_timeline(user.id))
+
+
 @router.get("")
 async def list_memories(
     page: int = Query(default=1, ge=1),

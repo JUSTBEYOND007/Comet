@@ -7,6 +7,7 @@ import KnowledgePage from './pages/KnowledgePage'
 import ImagePage from './pages/ImagePage'
 import TagPage from './pages/TagPage'
 import MemoryPage from './pages/MemoryPage'
+import GraphPage from './pages/GraphPage'
 import ChatPage from './pages/ChatPage'
 import AgentConfigPage from './pages/AgentConfigPage'
 import SearchPage from './pages/SearchPage'
@@ -32,6 +33,7 @@ export default function App() {
           <Route path="knowledge" element={<KnowledgePage />} />
           <Route path="images" element={<ImagePage />} />
           <Route path="memory" element={<MemoryPage />} />
+          <Route path="graph" element={<GraphPage />} />
           <Route path="search" element={<SearchPage />} />
           <Route path="favorites" element={<FavoritesPage />} />
           <Route path="tags" element={<TagPage />} />

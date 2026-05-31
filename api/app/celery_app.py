@@ -37,11 +37,15 @@ celery_app.conf.update(
         "app.tasks.memory.*": {"queue": "memory"},
         "app.tasks.beat.*": {"queue": "beat"},
     },
-    # Celery beat 定时：每天 22:00 生成当日回顾
+    # Celery beat 定时
     beat_schedule={
         "daily-review": {
             "task": "app.tasks.beat.generate_daily_reviews",
-            "schedule": crontab(hour=22, minute=0),
+            "schedule": crontab(hour=22, minute=0),  # 每天 22:00 生成回顾
+        },
+        "cluster-communities": {
+            "task": "app.tasks.beat.cluster_communities",
+            "schedule": crontab(hour=3, minute=0),  # 每天凌晨 3:00 全量聚类兜底
         },
     },
 )

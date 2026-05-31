@@ -45,3 +45,41 @@ async def _run() -> int:
 def generate_daily_reviews_task() -> int:
     """每日回顾批量生成的 Celery 任务入口。"""
     return asyncio.run(_run())
+
+
+async def _run_clustering() -> int:
+    """为所有用户跑一次全量社区聚类（定时兜底纠偏）。"""
+    from app.core.llm.resolver import get_optional_client_for_type
+    from app.core.memory.clustering.label_propagation import LabelPropagationEngine
+    from app.db import neo4j
+
+    engine_db = create_task_engine()
+    session_maker = async_sessionmaker(
+        engine_db, expire_on_commit=False, class_=AsyncSession
+    )
+    count = 0
+    try:
+        async with session_maker() as session:
+            result = await session.execute(select(User.id))
+            user_ids = [row[0] for row in result.all()]
+            for uid in user_ids:
+                try:
+                    chat_client = await get_optional_client_for_type(
+                        session, uid, "chat"
+                    )
+                    engine = LabelPropagationEngine(chat_client=chat_client)
+                    await engine.full_clustering(str(uid))
+                    count += 1
+                except Exception as e:
+                    logger.warning("用户 %s 全量聚类失败: %s", uid, e)
+    finally:
+        await engine_db.dispose()
+        await neo4j.close()
+    logger.info("全量社区聚类完成: %d 个用户", count)
+    return count
+
+
+@celery_app.task(name="app.tasks.beat.cluster_communities")
+def cluster_communities_task() -> int:
+    """全量社区聚类的 Celery 任务入口（定时兜底）。"""
+    return asyncio.run(_run_clustering())

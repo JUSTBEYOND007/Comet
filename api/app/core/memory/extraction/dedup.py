@@ -138,6 +138,26 @@ async def merge_with_graph(
             cache[ent.type] = await repo.list_entities_by_type(user_id, ent.type)
         existing = cache[ent.type]
 
+        # 同名同类型直接复用已有图节点，不问 LLM。
+        # 关键：保证「用户」等稳定自指实体跨多次萃取只有一个图节点，
+        # 避免 LLM 非确定性判定把同名实体反复判为不同而重复建节点。
+        norm_name = ent.name.strip().lower()
+        exact = next(
+            (r for r in existing if (r.get("name") or "").strip().lower() == norm_name),
+            None,
+        )
+        if exact is not None:
+            existing_node = EntityNode(
+                id=exact["id"], user_id=user_id, name=exact.get("name", ""),
+                type=ent.type, description=exact.get("description") or "",
+                aliases=exact.get("aliases") or [],
+            )
+            _merge_into(existing_node, ent)
+            existing_node.name_embedding = ent.name_embedding or exact.get("name_embedding")
+            redirect[ent.id] = existing_node.id
+            out.append(existing_node)
+            continue
+
         best = None
         best_score = 0.0
         for row in existing:

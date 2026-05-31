@@ -12,12 +12,14 @@ from datetime import datetime
 from app.core.llm.client import LLMClient
 from app.core.logging import get_logger
 from app.core.memory.extraction import dedup, embedder, triplet_extractor
-from app.core.memory.extraction.models import ExtractedTriplet
+from app.core.memory.extraction.models import ExtractedEvent, ExtractedTriplet
 from app.core.memory.graph_models import (
     SOURCE_MANUAL,
     ChunkNode,
     DialogueNode,
     EntityNode,
+    EventNode,
+    InvolvesEdge,
     MentionEdge,
     RelationEdge,
     StatementNode,
@@ -38,6 +40,7 @@ class ExtractionStats:
         self.statement_count = 0
         self.entity_count = 0
         self.relation_count = 0
+        self.event_count = 0
         self.entity_ids: list[str] = []
 
     def to_dict(self) -> dict:
@@ -47,6 +50,7 @@ class ExtractionStats:
             "statements": self.statement_count,
             "entities": self.entity_count,
             "relations": self.relation_count,
+            "events": self.event_count,
             "entity_ids": self.entity_ids,
         }
 
@@ -100,6 +104,8 @@ async def run_extraction(
     mentions: list[MentionEdge] = []
     # 记录 (statement_id, local_idx) → EntityNode，用于三元组连边
     pending_triplets: list[tuple[str, ExtractedTriplet, dict[int, EntityNode]]] = []
+    # 收集事件：(ExtractedEvent, 本块实体名→EntityNode 映射)，去重后按参与者连边
+    pending_events: list[tuple[ExtractedEvent, dict[str, EntityNode]]] = []
 
     dialog_at_str = dialog_at.isoformat()
 
@@ -113,6 +119,8 @@ async def run_extraction(
         triplet_results = await triplet_extractor.extract_triplets_batch(
             chat_client, extracted_stmts, context=chunk.content, dialog_at=dialog_at_str
         )
+        # 本块内 实体名 → EntityNode（供事件按 participants 名字关联）
+        chunk_name_map: dict[str, EntityNode] = {}
         for stmt, tres in zip(extracted_stmts, triplet_results):
             stmt_node = StatementNode(
                 user_id=user_id, chunk_id=chunk.id, statement=stmt.statement,
@@ -130,18 +138,21 @@ async def run_extraction(
                 )
                 idx_map[ent.entity_idx] = node
                 entity_pool.append(node)
+                chunk_name_map[node.name] = node
                 mentions.append(MentionEdge(
                     user_id=user_id, statement_id=stmt_node.id, entity_id=node.id
                 ))
             for trip in tres.triplets:
                 pending_triplets.append((stmt_node.id, trip, idx_map))
+            for ev in tres.events:
+                pending_events.append((ev, chunk_name_map))
 
     stats.statement_count = len(statements)
     if not entity_pool:
-        # 没抽到实体也写来源 + 陈述（保留溯源），关系为空
+        # 没抽到实体也写来源 + 陈述（保留溯源），关系/事件为空
         await _persist(
             dialogue=dialogue, chunks=chunks, statements=statements,
-            entities=[], mentions=mentions, relations=[],
+            entities=[], mentions=mentions, relations=[], events=[], involves=[],
         )
         return stats
 
@@ -194,11 +205,49 @@ async def run_extraction(
         ))
     stats.relation_count = len(relations)
 
-    # 9. 写图（单事务原子落库）
+    # 9. 事件 → Event 节点 + INVOLVES 边（按 participants 名字匹配到最终实体）
+    events: list[EventNode] = []
+    involves: list[InvolvesEdge] = []
+    for ev, name_map in pending_events:
+        title = (ev.title or "").strip()
+        if not title:
+            continue
+        event_node = EventNode(
+            user_id=user_id, title=title,
+            description=ev.description or "",
+            event_time=_parse_dt(ev.event_time),
+        )
+        # 参与者名字 → 本块 EntityNode → 重定向到最终实体 id
+        linked: set[str] = set()
+        for pname in ev.participants:
+            ent = name_map.get((pname or "").strip())
+            if not ent:
+                continue
+            eid = resolve(ent.id)
+            if eid in final_by_id and eid not in linked:
+                linked.add(eid)
+                involves.append(InvolvesEdge(
+                    user_id=user_id, event_id=event_node.id, entity_id=eid
+                ))
+        events.append(event_node)
+    stats.event_count = len(events)
+
+    # 10. 写图（单事务原子落库）
     await _persist(
         dialogue=dialogue, chunks=chunks, statements=statements,
         entities=final_entities, mentions=mentions, relations=relations,
+        events=events, involves=involves,
     )
+
+    # 11. 增量社区聚类（新实体归入社区；失败不影响萃取结果）
+    try:
+        from app.core.memory.clustering.label_propagation import LabelPropagationEngine
+
+        engine = LabelPropagationEngine(chat_client=chat_client)
+        await engine.run(user_id, new_entity_ids=stats.entity_ids)
+    except Exception as e:
+        logger.warning("增量社区聚类失败（忽略）: %s", e)
+
     logger.info("记忆萃取完成: %s", stats.to_dict())
     return stats
 
@@ -211,12 +260,14 @@ async def _persist(
     entities: list[EntityNode],
     mentions: list[MentionEdge],
     relations: list[RelationEdge],
+    events: list[EventNode],
+    involves: list[InvolvesEdge],
 ) -> None:
     repo = MemoryGraphRepository()
     await repo.save_graph(
         dialogues=[dialogue], chunks=chunks, statements=statements,
-        entities=entities, events=[], mentions=mentions,
-        relations=relations, involves=[],
+        entities=entities, events=events, mentions=mentions,
+        relations=relations, involves=involves,
     )
 
 

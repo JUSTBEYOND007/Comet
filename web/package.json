@@ -11,8 +11,12 @@
   },
   "dependencies": {
     "@ant-design/icons": "^5.5.2",
+    "@antv/layout": "^2.0.0",
+    "@antv/x6": "^3.1.7",
     "antd": "^5.22.5",
     "axios": "^1.7.9",
+    "echarts": "^6.1.0",
+    "echarts-for-react": "^3.0.6",
     "react": "^18.3.1",
     "react-dom": "^18.3.1",
     "react-markdown": "^10.1.0",

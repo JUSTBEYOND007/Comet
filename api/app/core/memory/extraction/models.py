@@ -24,6 +24,16 @@ class StatementExtractionResult(BaseModel):
 
 # ── 三元组抽取 ──
 
+class ExtractedEvent(BaseModel):
+    """LLM 抽出的事件（一次性发生、有时间的经历）。"""
+
+    model_config = ConfigDict(extra="ignore")
+    title: str  # 事件标题，如「完成项目上线」
+    description: str = ""  # 事件描述
+    event_time: str | None = None  # ISO 时间 或 NULL
+    participants: list[str] = Field(default_factory=list)  # 涉及实体名（关联到已抽实体）
+
+
 class ExtractedEntity(BaseModel):
     """LLM 抽出的实体（chunk 内局部 idx 用于关联 triplet）。"""
 
@@ -53,6 +63,7 @@ class TripletExtractionResult(BaseModel):
     model_config = ConfigDict(extra="ignore")
     entities: list[ExtractedEntity] = Field(default_factory=list)
     triplets: list[ExtractedTriplet] = Field(default_factory=list)
+    events: list[ExtractedEvent] = Field(default_factory=list)
 
 
 # ── 实体去重判定 ──
@@ -68,6 +79,7 @@ class DedupDecision(BaseModel):
 __all__ = [
     "ExtractedStatement",
     "StatementExtractionResult",
+    "ExtractedEvent",
     "ExtractedEntity",
     "ExtractedTriplet",
     "TripletExtractionResult",

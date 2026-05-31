@@ -87,10 +87,35 @@
   "triplets": []
 }
 
+===事件抽取===
+除实体和三元组外，如果陈述描述了**一次性发生、有明确时间点**的经历/事件（如"上周完成了项目上线""昨天去了北京开会""2025年3月入职腾讯"），额外抽取到 `events`：
+- `title`：简短事件标题（如「完成项目上线」「入职腾讯」）
+- `description`：事件简述
+- `event_time`：事件发生时间，复制 dialog_at 或陈述中明确的时间，ISO8601；无法确定填 NULL
+- `participants`：事件涉及的实体名（必须是上面 entities 里出现过的 name）
+
+只有**一次性、过去发生**的经历才作为事件；稳定的画像/偏好/关系（"在腾讯工作""喜欢咖啡"）不是事件，不要抽。无事件则 events 返回 []。
+
+事件示例：
+陈述："用户上周完成了知识库项目的上线。"（dialog_at = 2025-06-10T09:00:00Z）
+输出：
+{
+  "entities": [
+    {"entity_idx": 0, "name": "用户", "type": "生命体", "description": "完成知识库项目上线的用户"},
+    {"entity_idx": 1, "name": "知识库项目", "type": "具体目标", "description": "用户上线的项目"}
+  ],
+  "triplets": [
+    {"subject_name": "用户", "subject_id": 0, "predicate": "创建了", "predicate_surface": "完成上线", "object_name": "知识库项目", "object_id": 1, "value": null, "valid_at": "NULL", "invalid_at": "NULL"}
+  ],
+  "events": [
+    {"title": "完成知识库项目上线", "description": "用户上周完成了知识库项目的上线", "event_time": "2025-06-10T09:00:00Z", "participants": ["用户", "知识库项目"]}
+  ]
+}
+
 ===输出格式===
 - 使用标准 ASCII 双引号，字符串内引号转义为 \"，不使用中文引号，字符串值内不要换行。
-- 若指代无法稳定解析，返回 `{"entities": [], "triplets": []}`。
-- 若无有效关系，triplets 返回 []。
+- 若指代无法稳定解析，返回 `{"entities": [], "triplets": [], "events": []}`。
+- 若无有效关系，triplets 返回 []；若无事件，events 返回 []。
 
 输出 JSON 结构：
 ```json
@@ -100,6 +125,9 @@
   ],
   "triplets": [
     {"subject_name": "string", "subject_id": 0, "predicate": "string", "predicate_surface": "string", "object_name": "string", "object_id": 0, "value": "string | null", "valid_at": "ISO8601 | NULL", "invalid_at": "ISO8601 | NULL"}
+  ],
+  "events": [
+    {"title": "string", "description": "string", "event_time": "ISO8601 | NULL", "participants": ["string"]}
   ]
 }
 ```

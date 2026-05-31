@@ -92,8 +92,10 @@ class ModelConfigService:
     ) -> tuple[bool, str]:
         config = await self._get_or_404(user_id, config_id)
         api_key = decrypt_secret(config.api_key_encrypted)
+        # websearch 按 provider 测试（base_url 字段对联网搜索无意义，传 provider）
+        first_arg = config.provider if config.type == "websearch" else config.base_url
         ok, msg = await test_connection(
-            config.type, config.base_url, api_key, config.model_name
+            config.type, first_arg, api_key, config.model_name
         )
         logger.info(
             "模型连接测试: user=%s id=%s success=%s msg=%s",

@@ -7,6 +7,10 @@ import KnowledgePage from './pages/KnowledgePage'
 import ImagePage from './pages/ImagePage'
 import TagPage from './pages/TagPage'
 import MemoryPage from './pages/MemoryPage'
+import ChatPage from './pages/ChatPage'
+import AgentConfigPage from './pages/AgentConfigPage'
+import SearchPage from './pages/SearchPage'
+import FavoritesPage from './pages/FavoritesPage'
 import RequireAuth from './components/RequireAuth'
 
 // 阶段1：登录页 + 路由守卫；主布局需登录后访问
@@ -24,11 +28,15 @@ export default function App() {
           }
         >
           <Route index element={<HomePage />} />
+          <Route path="chat" element={<ChatPage />} />
           <Route path="knowledge" element={<KnowledgePage />} />
           <Route path="images" element={<ImagePage />} />
           <Route path="memory" element={<MemoryPage />} />
+          <Route path="search" element={<SearchPage />} />
+          <Route path="favorites" element={<FavoritesPage />} />
           <Route path="tags" element={<TagPage />} />
           <Route path="settings/models" element={<ModelConfigPage />} />
+          <Route path="settings/agent" element={<AgentConfigPage />} />
         </Route>
         <Route path="*" element={<Navigate to="/" replace />} />
       </Routes>

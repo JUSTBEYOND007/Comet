@@ -11,6 +11,8 @@ export const theme: ThemeConfig = {
     colorBgLayout: '#FAFAFA',
     borderRadius: 8,
     fontSize: 16,
+    fontSizeLG: 18,
+    lineHeight: 1.7,
     fontFamily:
       "'PingFang SC', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Microsoft YaHei', sans-serif",
     boxShadowSecondary:
@@ -29,9 +31,12 @@ export const theme: ThemeConfig = {
       itemSelectedColor: '#155EEF',
       itemHoverBg: '#F7F7F7',
       itemColor: '#475467',
-      itemHeight: 48,
-      itemMarginInline: 8,
-      fontSize: 16,
+      itemHeight: 44,
+      itemMarginInline: 10,
+      itemMarginBlock: 4,
+      fontSize: 15,
+      groupTitleColor: '#98A2B3',
+      groupTitleFontSize: 12,
     },
     Card: {
       borderRadiusLG: 12,
@@ -39,6 +44,9 @@ export const theme: ThemeConfig = {
     Button: {
       controlHeight: 40,
       fontWeight: 500,
+    },
+    Input: {
+      fontSize: 16,
     },
   },
 }

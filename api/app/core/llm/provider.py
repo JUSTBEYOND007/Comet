@@ -24,6 +24,8 @@ async def test_connection(
     type_: str, base_url: str, api_key: str, model_name: str
 ) -> tuple[bool, str]:
     """实际调一次目标 API 验证可用性。返回 (是否成功, 中文提示)。"""
+    if type_ == "websearch":
+        return await _test_websearch(base_url, api_key, model_name)
     base = base_url.rstrip("/")
     headers = {"Authorization": f"Bearer {api_key}"}
     try:
@@ -78,3 +80,22 @@ async def test_connection(
     except Exception:
         detail = resp.text[:200]
     return False, f"测试失败（HTTP {resp.status_code}）：{detail}"
+
+
+async def _test_websearch(
+    provider: str, api_key: str, _model_name: str
+) -> tuple[bool, str]:
+    """联网搜索连接测试：用 provider（这里 base_url 字段复用存 provider 名）发一次最小搜索。"""
+    from app.core.agent.web_search import web_search
+
+    try:
+        result = await web_search(provider, api_key, "今天的日期", top_k=1)
+        if result:
+            return True, "连接成功"
+        return False, "搜索返回为空，请检查配置"
+    except httpx.HTTPStatusError as e:
+        if e.response.status_code in (401, 403):
+            return False, "API Key 无效或无权限"
+        return False, f"测试失败（HTTP {e.response.status_code}）"
+    except Exception as e:
+        return False, f"连接失败：{e}"

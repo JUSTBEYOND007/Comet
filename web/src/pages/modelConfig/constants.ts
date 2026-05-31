@@ -5,6 +5,7 @@ export const TYPE_OPTIONS: { label: string; value: ModelType }[] = [
   { label: '多模态模型', value: 'multimodal' },
   { label: 'Embedding 模型', value: 'embedding' },
   { label: 'Rerank 模型', value: 'rerank' },
+  { label: '联网搜索', value: 'websearch' },
 ]
 
 export const TYPE_LABEL: Record<ModelType, string> = {
@@ -12,6 +13,7 @@ export const TYPE_LABEL: Record<ModelType, string> = {
   multimodal: '多模态',
   embedding: 'Embedding',
   rerank: 'Rerank',
+  websearch: '联网搜索',
 }
 
 export const PROVIDER_OPTIONS: { label: string; value: Provider }[] = [
@@ -20,6 +22,8 @@ export const PROVIDER_OPTIONS: { label: string; value: Provider }[] = [
   { label: '豆包', value: 'doubao' },
   { label: 'DeepSeek', value: 'deepseek' },
   { label: '智谱', value: 'zhipu' },
+  { label: '百度千帆（联网搜索）', value: 'qianfan' },
+  { label: 'Tavily（联网搜索）', value: 'tavily' },
 ]
 
 // 各 provider 默认 base_url，与后端 provider.py 保持一致
@@ -29,6 +33,8 @@ export const PROVIDER_DEFAULT_BASE_URL: Record<Provider, string> = {
   doubao: 'https://ark.cn-beijing.volces.com/api/v3',
   deepseek: 'https://api.deepseek.com/v1',
   zhipu: 'https://open.bigmodel.cn/api/paas/v4',
+  qianfan: '',
+  tavily: '',
 }
 
 export const CAPABILITY_OPTIONS = [

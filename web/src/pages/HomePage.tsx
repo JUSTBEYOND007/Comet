@@ -9,6 +9,7 @@ import {
   ThunderboltOutlined,
 } from '@ant-design/icons'
 import client from '@/api/client'
+import { dashboardApi, type DailyReview } from '@/api/dashboard'
 import { useAuthStore } from '@/stores/authStore'
 
 interface HealthData {
@@ -28,6 +29,8 @@ export default function HomePage() {
   const [health, setHealth] = useState<HealthData | null>(null)
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  const [review, setReview] = useState<DailyReview | null>(null)
+  const [reviewLoading, setReviewLoading] = useState(false)
 
   const check = async () => {
     setLoading(true)
@@ -42,12 +45,25 @@ export default function HomePage() {
     }
   }
 
+  const loadReview = async () => {
+    setReviewLoading(true)
+    try {
+      const { data } = await dashboardApi.dailyReview()
+      setReview(data)
+    } catch {
+      // 回顾失败不影响仪表盘其余部分
+    } finally {
+      setReviewLoading(false)
+    }
+  }
+
   useEffect(() => {
     check()
+    loadReview()
   }, [])
 
   return (
-    <div style={{ maxWidth: 1400, margin: '0 auto' }}>
+    <div className="fluid-page">
       {/* 欢迎横幅 */}
       <Card
         style={{
@@ -62,6 +78,25 @@ export default function HomePage() {
         </h2>
         <p style={{ color: 'rgba(255,255,255,0.7)', marginTop: 8, marginBottom: 0 }}>
           欢迎使用彗记 Comet —— 你的个人 AI 知识库与记忆助手。
+        </p>
+      </Card>
+
+      {/* 每日回顾 */}
+      <Card
+        title="今日回顾"
+        loading={reviewLoading}
+        style={{ marginBottom: 24 }}
+        extra={
+          review?.stats && (
+            <span style={{ color: '#98A2B3', fontSize: 13 }}>
+              对话 {review.stats.messages} · 记忆 {review.stats.memories} · 文档{' '}
+              {review.stats.documents}
+            </span>
+          )
+        }
+      >
+        <p style={{ margin: 0, color: '#475467', lineHeight: 1.8, whiteSpace: 'pre-wrap' }}>
+          {review?.content ?? '今天还没有回顾'}
         </p>
       </Card>
 

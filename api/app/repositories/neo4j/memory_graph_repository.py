@@ -235,6 +235,23 @@ class MemoryGraphRepository:
             record = await result.single()
             return record["cnt"] if record else 0
 
+    async def list_all_entities(self, user_id: str) -> list[dict[str, Any]]:
+        """列出用户全部实体（含一跳出边关系），供画像视图。"""
+        async with self._driver.session() as session:
+            result = await session.run(cq.ENTITY_LIST_ALL, user_id=user_id)
+            return [dict(record) async for record in result]
+
+    async def entity_type_counts(self, user_id: str) -> list[dict[str, Any]]:
+        """每种实体类型的数量。"""
+        async with self._driver.session() as session:
+            result = await session.run(cq.ENTITY_TYPE_COUNTS, user_id=user_id)
+            return [dict(record) async for record in result]
+
+    async def delete_entity(self, user_id: str, entity_id: str) -> None:
+        """删除单个实体（连带其关系）。"""
+        async with self._driver.session() as session:
+            await session.run(cq.DELETE_ENTITY, user_id=user_id, entity_id=entity_id)
+
     async def delete_user_graph(self, user_id: str) -> None:
         """删除某用户的全部图数据（数据隔离 / 重置用）。"""
         async with self._driver.session() as session:

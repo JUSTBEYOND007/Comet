@@ -5,8 +5,10 @@ from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 
-ModelTypeT = Literal["chat", "multimodal", "embedding", "rerank"]
-ProviderT = Literal["openai", "qwen", "doubao", "deepseek", "zhipu"]
+ModelTypeT = Literal["chat", "multimodal", "embedding", "rerank", "websearch"]
+ProviderT = Literal[
+    "openai", "qwen", "doubao", "deepseek", "zhipu", "qianfan", "tavily"
+]
 
 
 class ModelConfigCreate(BaseModel):

@@ -1,4 +1,4 @@
-import { Avatar, Dropdown, Layout, Menu, Space, message } from 'antd'
+import { Avatar, Dropdown, Input, Layout, Menu, Space, message } from 'antd'
 import {
   AppstoreOutlined,
   BookOutlined,
@@ -7,7 +7,10 @@ import {
   HddOutlined,
   LogoutOutlined,
   PictureOutlined,
+  RobotOutlined,
+  SearchOutlined,
   SettingOutlined,
+  StarOutlined,
   TagsOutlined,
   UserOutlined,
 } from '@ant-design/icons'
@@ -16,16 +19,43 @@ import { useAuthStore } from '@/stores/authStore'
 
 const { Sider, Content, Header } = Layout
 
-// 导航骨架：菜单项随各阶段页面落地逐步启用
+// 分组导航：按职责归类，分组标题灰色小字，更清晰
 const menuItems = [
-  { key: '/', icon: <AppstoreOutlined />, label: '仪表盘' },
-  { key: '/chat', icon: <CommentOutlined />, label: '对话' },
-  { key: '/knowledge', icon: <BookOutlined />, label: '知识库' },
-  { key: '/images', icon: <PictureOutlined />, label: '图片库' },
-  { key: '/memory', icon: <HddOutlined />, label: '记忆' },
-  { key: '/graph', icon: <DeploymentUnitOutlined />, label: '知识图谱' },
-  { key: '/tags', icon: <TagsOutlined />, label: '标签管理' },
-  { key: '/settings/models', icon: <SettingOutlined />, label: '模型配置' },
+  {
+    type: 'group' as const,
+    label: '工作台',
+    children: [
+      { key: '/', icon: <AppstoreOutlined />, label: '仪表盘' },
+      { key: '/chat', icon: <CommentOutlined />, label: '对话' },
+    ],
+  },
+  {
+    type: 'group' as const,
+    label: '知识与记忆',
+    children: [
+      { key: '/knowledge', icon: <BookOutlined />, label: '知识库' },
+      { key: '/images', icon: <PictureOutlined />, label: '图片库' },
+      { key: '/memory', icon: <HddOutlined />, label: '记忆' },
+      { key: '/graph', icon: <DeploymentUnitOutlined />, label: '知识图谱' },
+    ],
+  },
+  {
+    type: 'group' as const,
+    label: '检索与收藏',
+    children: [
+      { key: '/search', icon: <SearchOutlined />, label: '全局搜索' },
+      { key: '/favorites', icon: <StarOutlined />, label: '收藏夹' },
+      { key: '/tags', icon: <TagsOutlined />, label: '标签管理' },
+    ],
+  },
+  {
+    type: 'group' as const,
+    label: '设置',
+    children: [
+      { key: '/settings/models', icon: <SettingOutlined />, label: '模型配置' },
+      { key: '/settings/agent', icon: <RobotOutlined />, label: 'Agent 配置' },
+    ],
+  },
 ]
 
 export default function MainLayout() {
@@ -43,15 +73,17 @@ export default function MainLayout() {
   return (
     <Layout style={{ height: '100vh' }}>
       <Sider
-        width={232}
+        width={236}
         style={{
-          overflow: 'hidden',
+          display: 'flex',
+          flexDirection: 'column',
           borderInlineEnd: '1px solid #f0f0f0',
         }}
       >
         <div
           style={{
             height: 64,
+            flexShrink: 0,
             display: 'flex',
             alignItems: 'center',
             gap: 10,
@@ -77,13 +109,15 @@ export default function MainLayout() {
           </div>
           <span style={{ fontWeight: 600, fontSize: 19 }}>彗记 Comet</span>
         </div>
-        <Menu
-          mode="inline"
-          selectedKeys={[location.pathname]}
-          items={menuItems}
-          onClick={({ key }) => navigate(key)}
-          style={{ borderInlineEnd: 'none', marginTop: 8 }}
-        />
+        <div style={{ flex: 1, overflowY: 'auto', paddingBottom: 12 }}>
+          <Menu
+            mode="inline"
+            selectedKeys={[location.pathname]}
+            items={menuItems}
+            onClick={({ key }) => navigate(key)}
+            style={{ borderInlineEnd: 'none' }}
+          />
+        </div>
       </Sider>
       <Layout>
         <Header
@@ -95,9 +129,15 @@ export default function MainLayout() {
             borderBottom: '1px solid #f0f0f0',
           }}
         >
-          <span style={{ color: '#667085', fontSize: 15 }}>
-            个人 AI 知识库与记忆助手
-          </span>
+          <Input.Search
+            placeholder="搜索文档、图片、记忆…"
+            allowClear
+            style={{ maxWidth: 420, width: '40vw' }}
+            onSearch={(v) => {
+              const q = v.trim()
+              if (q) navigate(`/search?q=${encodeURIComponent(q)}`)
+            }}
+          />
           <Dropdown
             menu={{
               items: [

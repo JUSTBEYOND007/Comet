@@ -51,9 +51,42 @@ export interface MemoryHit {
   relations: MemoryRelation[]
 }
 
+// 画像：实体（含一跳关系）
+export interface EntityRelation {
+  predicate: string
+  object_name: string | null
+  object_type: string | null
+}
+
+export interface ProfileEntity {
+  id: string
+  name: string
+  type: string
+  description: string
+  aliases: string[]
+  relations: EntityRelation[]
+}
+
+export interface ProfileGroup {
+  type: string
+  entities: ProfileEntity[]
+}
+
+export interface MemoryProfile {
+  total: number
+  type_counts: Record<string, number>
+  groups: ProfileGroup[]
+}
+
 export const memoryApi = {
   remember(text: string) {
     return client.post<unknown, Wrapped<MemoryItem>>('/memories/remember', { text })
+  },
+  profile() {
+    return client.get<unknown, Wrapped<MemoryProfile>>('/memories/profile')
+  },
+  deleteEntity(entityId: string) {
+    return client.delete<unknown, Wrapped<null>>(`/memories/entity/${entityId}`)
   },
   list(page = 1, pageSize = 20) {
     const q = new URLSearchParams({ page: String(page), page_size: String(pageSize) })

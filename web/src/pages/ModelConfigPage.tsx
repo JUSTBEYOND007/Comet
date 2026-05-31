@@ -172,7 +172,7 @@ export default function ModelConfigPage() {
   ]
 
   return (
-    <div style={{ maxWidth: 1400, margin: '0 auto' }}>
+    <div className="fluid-page">
       <Card
         title="模型配置"
         extra={

@@ -38,6 +38,27 @@ async def search_memory(
     return success(hits)
 
 
+@router.get("/profile")
+async def get_profile(
+    user: User = Depends(get_current_user),
+    session: AsyncSession = Depends(get_session),
+):
+    """画像视图：系统记住的实体（按类型分组）+ 类型计数。"""
+    data = await MemoryService(session).get_profile(user.id)
+    return success(data)
+
+
+@router.delete("/entity/{entity_id}")
+async def delete_entity(
+    entity_id: str,
+    user: User = Depends(get_current_user),
+    session: AsyncSession = Depends(get_session),
+):
+    """删除单个记忆实体（连带其关系）。"""
+    await MemoryService(session).delete_entity(user.id, entity_id)
+    return success(message="删除成功")
+
+
 @router.get("")
 async def list_memories(
     page: int = Query(default=1, ge=1),

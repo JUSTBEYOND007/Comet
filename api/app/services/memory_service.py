@@ -70,6 +70,45 @@ class MemoryService:
             embed_client=embed_client, user_id=user_id, query=query, top_k=top_k
         )
 
+    async def get_profile(self, user_id: uuid.UUID) -> dict:
+        """画像视图：图谱实体按类型分组 + 类型计数。"""
+        from app.repositories.neo4j.memory_graph_repository import (
+            MemoryGraphRepository,
+        )
+
+        repo = MemoryGraphRepository()
+        uid = str(user_id)
+        entities = await repo.list_all_entities(uid)
+        counts = await repo.entity_type_counts(uid)
+
+        groups: dict[str, list[dict]] = {}
+        for e in entities:
+            item = {
+                "id": e.get("id"),
+                "name": e.get("name"),
+                "type": e.get("type"),
+                "description": e.get("description") or "",
+                "aliases": e.get("aliases") or [],
+                "relations": e.get("relations") or [],
+            }
+            groups.setdefault(item["type"], []).append(item)
+
+        return {
+            "total": len(entities),
+            "type_counts": {c["type"]: c["cnt"] for c in counts},
+            "groups": [
+                {"type": t, "entities": items} for t, items in groups.items()
+            ],
+        }
+
+    async def delete_entity(self, user_id: uuid.UUID, entity_id: str) -> None:
+        """删除单个图谱实体（连带关系）。"""
+        from app.repositories.neo4j.memory_graph_repository import (
+            MemoryGraphRepository,
+        )
+
+        await MemoryGraphRepository().delete_entity(str(user_id), entity_id)
+
     @staticmethod
     def to_out_dict(memory: Memory) -> dict:
         return {

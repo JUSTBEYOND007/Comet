@@ -114,7 +114,7 @@ export default function TagPage() {
   ]
 
   return (
-    <div style={{ maxWidth: 1100, margin: '0 auto' }}>
+    <div className="fluid-page">
       <Card
         title="标签管理"
         extra={

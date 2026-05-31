@@ -11,7 +11,11 @@ from app.db.postgres import Base
 
 # 导入所有模型，确保它们注册到 Base.metadata（autogenerate 需要）
 from app.models import (  # noqa: F401
+    agent_config_model,
+    conversation_model,
+    daily_review_model,
     document_model,
+    favorite_model,
     image_model,
     memory_model,
     model_config_model,

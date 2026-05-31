@@ -169,6 +169,34 @@ RETURN e.id AS entity_id, e.name AS entity_name,
        o.id AS object_id, o.name AS object_name, o.type AS object_type
 """
 
+# ── 画像视图：列出用户全部实体（含每个实体的一跳出边关系，供卡片展示） ──
+
+ENTITY_LIST_ALL = """
+MATCH (e:Entity {user_id: $user_id})
+OPTIONAL MATCH (e)-[r:RELATION]->(o:Entity)
+WITH e, collect({predicate: r.predicate, object_name: o.name, object_type: o.type}) AS rels
+RETURN e.id AS id, e.name AS name, e.type AS type,
+       e.description AS description, e.aliases AS aliases,
+       e.created_at AS created_at,
+       [rel IN rels WHERE rel.predicate IS NOT NULL] AS relations
+ORDER BY e.created_at DESC
+"""
+
+# ── 统计：每种实体类型的数量 ──
+
+ENTITY_TYPE_COUNTS = """
+MATCH (e:Entity {user_id: $user_id})
+RETURN e.type AS type, count(e) AS cnt
+ORDER BY cnt DESC
+"""
+
+# ── 删除单个实体（连带其关系） ──
+
+DELETE_ENTITY = """
+MATCH (e:Entity {user_id: $user_id, id: $entity_id})
+DETACH DELETE e
+"""
+
 # ── 统计 / 删除（数据隔离） ──
 
 ENTITY_COUNT = """

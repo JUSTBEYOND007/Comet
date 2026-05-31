@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
+import { useSearchParams } from 'react-router-dom'
 import {
   Button,
   Input,
@@ -22,10 +23,12 @@ import {
   type Conversation,
   type ChatMessage,
 } from '@/api/chat'
+import { favoriteApi } from '@/api/favorites'
 import MessageItem from './chat/MessageItem'
 import type { UiMessage } from './chat/types'
 
 export default function ChatPage() {
+  const [params, setParams] = useSearchParams()
   const [conversations, setConversations] = useState<Conversation[]>([])
   const [activeId, setActiveId] = useState<string | undefined>()
   const [messages, setMessages] = useState<UiMessage[]>([])
@@ -33,7 +36,9 @@ export default function ChatPage() {
   const [sending, setSending] = useState(false)
   const [webSearch, setWebSearch] = useState(false)
   const [pendingImages, setPendingImages] = useState<{ key: string; url: string }[]>([])
+  const [highlightId, setHighlightId] = useState<string | null>(null)
   const scrollRef = useRef<HTMLDivElement>(null)
+  const msgRefs = useRef<Record<string, HTMLDivElement | null>>({})
 
   const loadConversations = async () => {
     try {
@@ -48,14 +53,33 @@ export default function ChatPage() {
     loadConversations()
   }, [])
 
+  // 收藏深链：?conversation=&message= 打开会话并定位消息
   useEffect(() => {
-    scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight, behavior: 'smooth' })
-  }, [messages])
+    const conv = params.get('conversation')
+    const msg = params.get('message')
+    if (conv) {
+      openConversation(conv, msg ?? undefined)
+      setParams({}, { replace: true })
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
 
-  const openConversation = async (id: string) => {
+  useEffect(() => {
+    if (highlightId) return // 深链定位时不强制滚到底
+    scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight, behavior: 'smooth' })
+  }, [messages, highlightId])
+
+  const openConversation = async (id: string, focusMessageId?: string) => {
     setActiveId(id)
     try {
-      const { data } = await chatApi.listMessages(id)
+      const [{ data }, favResp] = await Promise.all([
+        chatApi.listMessages(id),
+        favoriteApi.list('message'),
+      ])
+      const favByMsg: Record<string, string> = {}
+      favResp.data.forEach((f) => {
+        favByMsg[f.target_id] = f.id
+      })
       setMessages(
         data.map((m: ChatMessage) => ({
           id: m.id,
@@ -63,8 +87,21 @@ export default function ChatPage() {
           content: m.content,
           citations: m.meta_data?.citations,
           toolCalls: m.meta_data?.tool_calls,
+          conversationId: id,
+          favId: favByMsg[m.id] ?? null,
         })),
       )
+      if (focusMessageId) {
+        setHighlightId(focusMessageId)
+        // 等渲染后滚动定位
+        setTimeout(() => {
+          msgRefs.current[focusMessageId]?.scrollIntoView({
+            behavior: 'smooth',
+            block: 'center',
+          })
+          setTimeout(() => setHighlightId(null), 2500)
+        }, 200)
+      }
     } catch (e) {
       antdMessage.error((e as Error).message)
     }
@@ -131,6 +168,13 @@ export default function ChatPage() {
         onMeta: (d) => {
           convId = d.conversation_id
           if (!activeId) setActiveId(d.conversation_id)
+          setMessages((prev) =>
+            prev.map((m) =>
+              m.id === aiMsg.id || m.id === userMsg.id
+                ? { ...m, conversationId: d.conversation_id }
+                : m,
+            ),
+          )
         },
         onToken: (t) => {
           setMessages((prev) =>
@@ -153,9 +197,18 @@ export default function ChatPage() {
             prev.map((m) => (m.id === aiMsg.id ? { ...m, citations: cites } : m)),
           )
         },
-        onDone: () => {
+        onDone: (d) => {
           setMessages((prev) =>
-            prev.map((m) => (m.id === aiMsg.id ? { ...m, streaming: false } : m)),
+            prev.map((m) =>
+              m.id === aiMsg.id
+                ? {
+                    ...m,
+                    streaming: false,
+                    id: d.message_id ?? m.id,
+                    conversationId: d.conversation_id,
+                  }
+                : m,
+            ),
           )
           setSending(false)
           loadConversations()
@@ -282,7 +335,19 @@ export default function ChatPage() {
           ) : (
             <div className="fluid-narrow" style={{ padding: '0 24px' }}>
               {messages.map((m) => (
-                <MessageItem key={m.id} msg={m} />
+                <div
+                  key={m.id}
+                  ref={(el) => {
+                    msgRefs.current[m.id] = el
+                  }}
+                  style={{
+                    borderRadius: 12,
+                    transition: 'background 0.4s',
+                    background: highlightId === m.id ? '#FFF7E6' : 'transparent',
+                  }}
+                >
+                  <MessageItem msg={m} />
+                </div>
               ))}
             </div>
           )}

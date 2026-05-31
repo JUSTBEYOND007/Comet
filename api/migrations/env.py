@@ -13,7 +13,9 @@ from app.db.postgres import Base
 from app.models import (  # noqa: F401
     agent_config_model,
     conversation_model,
+    daily_review_model,
     document_model,
+    favorite_model,
     image_model,
     memory_model,
     model_config_model,

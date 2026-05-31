@@ -203,7 +203,7 @@ class ChatService:
             yield _sse("citation", {"citations": citations})
 
         # 存 assistant 消息（带引用 + 工具调用元信息）
-        await self.msg_repo.add(
+        assistant_msg = await self.msg_repo.add(
             Message(
                 conversation_id=conv.id,
                 role=ROLE_ASSISTANT,
@@ -216,7 +216,10 @@ class ChatService:
         # 回答后异步萃取记忆（对话自动萃取，不阻塞用户：仅落库+派发，萃取在 worker）
         await self._dispatch_memory(user_id, user_text)
 
-        yield _sse("done", {"conversation_id": str(conv.id)})
+        yield _sse(
+            "done",
+            {"conversation_id": str(conv.id), "message_id": str(assistant_msg.id)},
+        )
 
     @staticmethod
     async def _emit(

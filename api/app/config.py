@@ -81,6 +81,11 @@ class Settings(BaseSettings):
     # 知识库 RAG
     embedding_dims: int = 1024  # 向量维度，ES 索引与 embed 调用统一用此值
 
+    # 全局搜索语义门控（精确导向）：只展示余弦相似度 ≥ 阈值的结果，没有就不展示
+    # 阈值为真实余弦相似度（-1~1），按实测可调；偏高更精准、偏低召回更多
+    global_search_min_vector_score: float = 0.45
+    memory_search_min_vector_score: float = 0.45
+
     @property
     def database_url(self) -> str:
         return (

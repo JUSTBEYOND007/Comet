@@ -48,7 +48,7 @@ export interface StreamHandlers {
   onToken?: (text: string) => void
   onToolCall?: (d: ToolCall) => void
   onCitation?: (citations: Citation[]) => void
-  onDone?: (d: { conversation_id: string }) => void
+  onDone?: (d: { conversation_id: string; message_id?: string }) => void
   onError?: (message: string) => void
 }
 

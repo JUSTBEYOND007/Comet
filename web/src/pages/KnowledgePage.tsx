@@ -25,6 +25,8 @@ import {
   type DocumentItem,
   type SearchHit,
 } from '@/api/documents'
+import { favoriteApi } from '@/api/favorites'
+import FavoriteButton from '@/components/FavoriteButton'
 import TagFilterBar from '@/components/TagFilterBar'
 import { StatusTag, formatSize, groupByDate } from './knowledge/helpers'
 
@@ -36,8 +38,9 @@ type ViewMode = '列表' | '时间轴'
 export default function KnowledgePage() {
   const [list, setList] = useState<DocumentItem[]>([])
   const [loading, setLoading] = useState(false)
-  const [view, setView] = useState<ViewMode>('列表')
+  const [view, setView] = useState<ViewMode>('时间轴')
   const [activeTag, setActiveTag] = useState<string>()
+  const [favMap, setFavMap] = useState<Record<string, string>>({})
   const [urlModalOpen, setUrlModalOpen] = useState(false)
   const [url, setUrl] = useState('')
   const [importing, setImporting] = useState(false)
@@ -46,17 +49,45 @@ export default function KnowledgePage() {
   const [hits, setHits] = useState<SearchHit[] | null>(null)
   const pollRef = useRef<number | null>(null)
 
+  const loadFavorites = async () => {
+    try {
+      const { data } = await favoriteApi.list('document')
+      const map: Record<string, string> = {}
+      data.forEach((f) => {
+        map[f.target_id] = f.id
+      })
+      setFavMap(map)
+    } catch {
+      // 收藏态加载失败不影响主流程
+    }
+  }
+
   const load = useCallback(async () => {
     setLoading(true)
     try {
       const { data } = await documentApi.list(1, 100, activeTag)
       setList(data.items)
+      loadFavorites()
     } catch (e) {
       message.error((e as Error).message)
     } finally {
       setLoading(false)
     }
   }, [activeTag])
+
+  const onFavChange = (id: string, favId: string | null) => {
+    setFavMap((prev) => {
+      const next = { ...prev }
+      if (favId) next[id] = favId
+      else delete next[id]
+      return next
+    })
+  }
+
+  const favSnapshot = (d: DocumentItem) => ({
+    title: d.file_name,
+    summary: `${d.chunk_num} 块 · ${d.source_type === 'url' ? '网页' : '文件'}`,
+  })
 
   useEffect(() => {
     if (hits === null) load()
@@ -186,9 +217,16 @@ export default function KnowledgePage() {
     {
       title: '操作',
       key: 'action',
-      width: 150,
+      width: 180,
       render: (_, r) => (
         <Space size="small">
+          <FavoriteButton
+            targetType="document"
+            targetId={r.id}
+            initialFavId={favMap[r.id] ?? null}
+            snapshot={favSnapshot(r)}
+            onChange={onFavChange}
+          />
           {r.status === 'failed' && (
             <Button size="small" icon={<ReloadOutlined />} onClick={() => onRetry(r.id)}>
               重试
@@ -244,7 +282,7 @@ export default function KnowledgePage() {
             <Space style={{ width: '100%', justifyContent: 'space-between', marginBottom: 8 }}>
               <TagFilterBar active={activeTag} scope="document" onChange={setActiveTag} />
               <Segmented
-                options={['列表', '时间轴']}
+                options={['时间轴', '列表']}
                 value={view}
                 onChange={(v) => setView(v as ViewMode)}
               />
@@ -260,7 +298,14 @@ export default function KnowledgePage() {
                 locale={{ emptyText: <Empty description="还没有文档，上传一个试试" /> }}
               />
             ) : (
-              <Timeline list={list} tagsCell={tagsCell} onDelete={onDelete} />
+              <Timeline
+                list={list}
+                tagsCell={tagsCell}
+                onDelete={onDelete}
+                favMap={favMap}
+                favSnapshot={favSnapshot}
+                onFavChange={onFavChange}
+              />
             )}
           </>
         ) : (
@@ -291,10 +336,16 @@ function Timeline({
   list,
   tagsCell,
   onDelete,
+  favMap,
+  favSnapshot,
+  onFavChange,
 }: {
   list: DocumentItem[]
   tagsCell: (tags: DocumentItem['tags']) => React.ReactNode
   onDelete: (id: string) => void
+  favMap: Record<string, string>
+  favSnapshot: (d: DocumentItem) => Record<string, unknown>
+  onFavChange: (id: string, favId: string | null) => void
 }) {
   if (!list.length) return <Empty description="暂无文档" />
   const groups = groupByDate(list)
@@ -335,11 +386,20 @@ function Timeline({
                   <StatusTag status={d.status} />
                   {tagsCell(d.tags)}
                 </Space>
-                <Popconfirm title="确定删除？" onConfirm={() => onDelete(d.id)}>
-                  <Button size="small" type="link" danger>
-                    删除
-                  </Button>
-                </Popconfirm>
+                <Space>
+                  <FavoriteButton
+                    targetType="document"
+                    targetId={d.id}
+                    initialFavId={favMap[d.id] ?? null}
+                    snapshot={favSnapshot(d)}
+                    onChange={onFavChange}
+                  />
+                  <Popconfirm title="确定删除？" onConfirm={() => onDelete(d.id)}>
+                    <Button size="small" type="link" danger>
+                      删除
+                    </Button>
+                  </Popconfirm>
+                </Space>
               </Space>
             </Card>
           ))}

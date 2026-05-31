@@ -36,11 +36,15 @@ async def hybrid_search(
     recall_size: int = 20,
     tags: list[str] | None = None,
     source_type: str | None = None,
+    min_vector_score: float | None = None,
 ) -> list[dict]:
     """混合检索，返回 top_k 个结果（含 content / doc_name / source_id / score）。
 
     source_type 可选 document / image，在 ES 召回阶段就过滤，避免跨类型互相淹没。
     文档检索命中 child 子块（再取父块上下文）；图片检索命中 image_desc 块。
+
+    min_vector_score 不为 None 时启用「绝对相关度门控」（精确导向，用于全局搜索）：
+    只保留 BM25 命中 或 向量原始余弦得分 ≥ 阈值的结果，丢弃不相关的最近邻噪声。
     """
     es = get_es()
     uid = str(user_id)
@@ -113,6 +117,32 @@ async def hybrid_search(
         fused[cid] = (
             _VECTOR_WEIGHT * vec_n.get(cid, 0.0) + _BM25_WEIGHT * bm_n.get(cid, 0.0)
         )
+
+    # 3.5 精确模式（全局搜索）：纯语义余弦门控
+    # ES cosine knn 的 _score = (1 + cos) / 2 → cos = 2*score - 1
+    # 只保留余弦 ≥ 阈值的结果，按余弦排序，分数用余弦；BM25 单字噪声不达标即丢弃
+    if min_vector_score is not None:
+        cos_scores = {cid: 2.0 * s - 1.0 for cid, s in vec_scores.items()}
+        kept = {cid: c for cid, c in cos_scores.items() if c >= min_vector_score}
+        if not kept:
+            return []
+        ranked = sorted(kept.items(), key=lambda x: x[1], reverse=True)
+        candidate_ids = [cid for cid, _ in ranked[:top_k]]
+        results: list[dict] = []
+        for cid in candidate_ids:
+            src = hits[cid]
+            content = await _resolve_parent_content(es, uid, src)
+            results.append(
+                {
+                    "chunk_id": cid,
+                    "content": content,
+                    "doc_name": src.get("doc_name"),
+                    "source_id": src.get("source_id"),
+                    "source_type": src.get("source_type"),
+                    "score": round(kept[cid], 4),
+                }
+            )
+        return results
 
     ranked = sorted(fused.items(), key=lambda x: x[1], reverse=True)
     candidate_ids = [cid for cid, _ in ranked[: max(top_k, recall_size)]]

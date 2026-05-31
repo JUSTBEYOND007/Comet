@@ -6,6 +6,7 @@
 - beat     社区聚类 / 每日回顾（由 beat 定时触发）
 """
 from celery import Celery
+from celery.schedules import crontab
 
 from app.config import settings
 
@@ -13,7 +14,13 @@ celery_app = Celery(
     "comet",
     broker=settings.celery_broker_url,
     backend=settings.celery_result_backend,
-    include=["app.tasks", "app.tasks.parse", "app.tasks.image", "app.tasks.memory"],
+    include=[
+        "app.tasks",
+        "app.tasks.parse",
+        "app.tasks.image",
+        "app.tasks.memory",
+        "app.tasks.beat",
+    ],
 )
 
 celery_app.conf.update(
@@ -29,5 +36,12 @@ celery_app.conf.update(
         "app.tasks.image.*": {"queue": "parse"},
         "app.tasks.memory.*": {"queue": "memory"},
         "app.tasks.beat.*": {"queue": "beat"},
+    },
+    # Celery beat 定时：每天 22:00 生成当日回顾
+    beat_schedule={
+        "daily-review": {
+            "task": "app.tasks.beat.generate_daily_reviews",
+            "schedule": crontab(hour=22, minute=0),
+        },
     },
 )

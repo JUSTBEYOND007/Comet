@@ -32,10 +32,14 @@ async def search_memory(
     query: str,
     top_k: int = 10,
     recall_size: int = 20,
+    min_vector_score: float | None = None,
 ) -> list[dict]:
     """记忆检索：返回 top_k 个相关实体，每个带其一跳关系（关联事实）。
 
     结果结构：{id, name, type, description, aliases, score, relations:[{predicate, object_name, source_text}]}
+
+    min_vector_score 不为 None 时启用「绝对相关度门控」（精确导向，用于全局搜索）：
+    只保留全文命中 或 向量余弦相似度 ≥ 阈值的实体。
     """
     repo = MemoryGraphRepository()
     uid = str(user_id)
@@ -68,6 +72,44 @@ async def search_memory(
 
     # 3. 归一化 + 加权融合
     all_hits = {**ft_hits, **vec_hits}
+
+    # 3.5 精确模式（全局搜索）：纯语义余弦门控
+    # Neo4j 向量索引返回的 score 即 cosine 相似度；只保留 ≥ 阈值的，按余弦排序、分数用余弦
+    if min_vector_score is not None:
+        kept = {
+            eid: vec_scores[eid]
+            for eid in all_hits
+            if vec_scores.get(eid, 0.0) >= min_vector_score
+        }
+        if not kept:
+            return []
+        ranked = sorted(kept.items(), key=lambda x: x[1], reverse=True)[:top_k]
+        top_ids = [eid for eid, _ in ranked]
+        neighbor_rows = await repo.get_entity_neighbors(uid, top_ids)
+        relations_by_entity: dict[str, list[dict]] = {eid: [] for eid in top_ids}
+        for row in neighbor_rows:
+            eid = row.get("entity_id")
+            if eid in relations_by_entity and row.get("predicate"):
+                relations_by_entity[eid].append({
+                    "predicate": row.get("predicate"),
+                    "object_name": row.get("object_name"),
+                    "object_type": row.get("object_type"),
+                    "source_text": row.get("source_text"),
+                })
+        results: list[dict] = []
+        for eid, score in ranked:
+            src = all_hits[eid]
+            results.append({
+                "id": eid,
+                "name": src.get("name"),
+                "type": src.get("type"),
+                "description": src.get("description"),
+                "aliases": src.get("aliases") or [],
+                "score": round(score, 4),
+                "relations": relations_by_entity.get(eid, []),
+            })
+        return results
+
     vec_n = _normalize(vec_scores)
     ft_n = _normalize(ft_scores)
     fused: dict[str, float] = {}

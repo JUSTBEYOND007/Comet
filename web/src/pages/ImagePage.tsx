@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
+import { useSearchParams } from 'react-router-dom'
 import {
   Button,
   Card,
@@ -22,6 +23,8 @@ import {
   type ImageItem,
   type ImageSearchHit,
 } from '@/api/images'
+import { favoriteApi } from '@/api/favorites'
+import FavoriteButton from '@/components/FavoriteButton'
 import TagFilterBar from '@/components/TagFilterBar'
 import { groupByDate } from './knowledge/helpers'
 
@@ -40,10 +43,14 @@ function ImageCard({
   img,
   onClick,
   onDelete,
+  favId,
+  onFavChange,
 }: {
   img: ImageItem
   onClick: () => void
   onDelete: (id: string) => void
+  favId?: string | null
+  onFavChange?: (id: string, favId: string | null) => void
 }) {
   return (
     <Card
@@ -97,25 +104,50 @@ function ImageCard({
           <DeleteOutlined style={{ color: '#FF5D34' }} />
         </Popconfirm>
       </div>
+      <div style={{ marginTop: 4, textAlign: 'right' }}>
+        <FavoriteButton
+          targetType="image"
+          targetId={img.id}
+          initialFavId={favId ?? null}
+          snapshot={{ title: img.file_name, summary: img.description || '', url: img.url }}
+          onChange={onFavChange}
+        />
+      </div>
     </Card>
   )
 }
 
 export default function ImagePage() {
+  const [params, setParams] = useSearchParams()
   const [list, setList] = useState<ImageItem[]>([])
   const [loading, setLoading] = useState(false)
-  const [view, setView] = useState<ViewMode>('网格')
+  const [view, setView] = useState<ViewMode>('时间轴')
   const [activeTag, setActiveTag] = useState<string>()
   const [detail, setDetail] = useState<ImageItem | null>(null)
+  const [favMap, setFavMap] = useState<Record<string, string>>({})
   const [searching, setSearching] = useState(false)
   const [hits, setHits] = useState<(ImageSearchHit & { img?: ImageItem })[] | null>(null)
   const pollRef = useRef<number | null>(null)
+
+  const loadFavorites = async () => {
+    try {
+      const { data } = await favoriteApi.list('image')
+      const map: Record<string, string> = {}
+      data.forEach((f) => {
+        map[f.target_id] = f.id
+      })
+      setFavMap(map)
+    } catch {
+      // 收藏态加载失败不影响主流程
+    }
+  }
 
   const load = useCallback(async () => {
     setLoading(true)
     try {
       const { data } = await imageApi.list(1, 60, activeTag)
       setList(data.items)
+      loadFavorites()
     } catch (e) {
       message.error((e as Error).message)
     } finally {
@@ -123,9 +155,31 @@ export default function ImagePage() {
     }
   }, [activeTag])
 
+  const onFavChange = (id: string, favId: string | null) => {
+    setFavMap((prev) => {
+      const next = { ...prev }
+      if (favId) next[id] = favId
+      else delete next[id]
+      return next
+    })
+  }
+
   useEffect(() => {
     if (hits === null) load()
   }, [load, hits])
+
+  // 全局搜索深链：?image=<id> 打开该图片详情
+  useEffect(() => {
+    const imageId = params.get('image')
+    if (imageId) {
+      imageApi
+        .detail(imageId)
+        .then(({ data }) => setDetail(data))
+        .catch(() => {})
+      setParams({}, { replace: true })
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
 
   useEffect(() => {
     const hasPending = list.some(
@@ -226,7 +280,7 @@ export default function ImagePage() {
             <Space style={{ width: '100%', justifyContent: 'space-between', marginBottom: 8 }}>
               <TagFilterBar active={activeTag} scope="image" onChange={setActiveTag} />
               <Segmented
-                options={['网格', '时间轴']}
+                options={['时间轴', '网格']}
                 value={view}
                 onChange={(v) => setView(v as ViewMode)}
               />
@@ -242,12 +296,24 @@ export default function ImagePage() {
               <Row gutter={[16, 16]}>
                 {list.map((img) => (
                   <Col xs={12} sm={8} md={6} lg={4} key={img.id}>
-                    <ImageCard img={img} onClick={() => setDetail(img)} onDelete={onDelete} />
+                    <ImageCard
+                      img={img}
+                      onClick={() => setDetail(img)}
+                      onDelete={onDelete}
+                      favId={favMap[img.id] ?? null}
+                      onFavChange={onFavChange}
+                    />
                   </Col>
                 ))}
               </Row>
             ) : (
-              <ImageTimeline list={list} onClick={setDetail} onDelete={onDelete} />
+              <ImageTimeline
+                list={list}
+                onClick={setDetail}
+                onDelete={onDelete}
+                favMap={favMap}
+                onFavChange={onFavChange}
+              />
             )}
           </>
         ) : (
@@ -303,10 +369,14 @@ function ImageTimeline({
   list,
   onClick,
   onDelete,
+  favMap,
+  onFavChange,
 }: {
   list: ImageItem[]
   onClick: (img: ImageItem) => void
   onDelete: (id: string) => void
+  favMap: Record<string, string>
+  onFavChange: (id: string, favId: string | null) => void
 }) {
   const groups = groupByDate(list)
   return (
@@ -340,7 +410,13 @@ function ImageTimeline({
           <Row gutter={[16, 16]} style={{ marginBottom: 8 }}>
             {g.items.map((img) => (
               <Col xs={12} sm={8} md={6} lg={4} key={img.id}>
-                <ImageCard img={img} onClick={() => onClick(img)} onDelete={onDelete} />
+                <ImageCard
+                  img={img}
+                  onClick={() => onClick(img)}
+                  onDelete={onDelete}
+                  favId={favMap[img.id] ?? null}
+                  onFavChange={onFavChange}
+                />
               </Col>
             ))}
           </Row>

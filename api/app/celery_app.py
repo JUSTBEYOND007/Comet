@@ -13,7 +13,7 @@ celery_app = Celery(
     "comet",
     broker=settings.celery_broker_url,
     backend=settings.celery_result_backend,
-    include=["app.tasks"],
+    include=["app.tasks", "app.tasks.parse", "app.tasks.image", "app.tasks.memory"],
 )
 
 celery_app.conf.update(
@@ -26,6 +26,7 @@ celery_app.conf.update(
     task_default_queue="default",
     task_routes={
         "app.tasks.parse.*": {"queue": "parse"},
+        "app.tasks.image.*": {"queue": "parse"},
         "app.tasks.memory.*": {"queue": "memory"},
         "app.tasks.beat.*": {"queue": "beat"},
     },

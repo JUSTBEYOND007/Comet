@@ -7,17 +7,38 @@ from fastapi.middleware.cors import CORSMiddleware
 from app.config import settings
 from app.controllers.router import api_router
 from app.core.exceptions import register_exception_handlers
-from app.db import elastic, neo4j, redis
+from app.core.logging import get_logger, setup_logging
+from app.core.request_context import RequestContextMiddleware
+from app.db import elastic, neo4j, postgres, redis
+
+setup_logging()
+logger = get_logger(__name__)
 
 
 @asynccontextmanager
 async def lifespan(_: FastAPI):
-    # 启动：此处可做存储预连接 / 索引初始化（后续阶段补充）
+    # 启动：初始化 ES 索引
+    from app.core.rag.es_index import ensure_index
+
+    try:
+        await ensure_index()
+    except Exception as e:
+        logger.warning("ES 索引初始化失败（稍后可重试）: %s", e)
+    # 启动：初始化记忆图谱 schema（约束 + 向量/全文索引）
+    from app.core.memory.graph_schema import ensure_graph_schema
+
+    try:
+        await ensure_graph_schema()
+    except Exception as e:
+        logger.warning("记忆图谱 schema 初始化失败（稍后可重试）: %s", e)
+    logger.info("%s 启动完成", settings.app_name)
     yield
-    # 关闭：释放长连接
+    # 关闭：释放长连接 / 连接池
+    await postgres.close()
     await elastic.close()
     await neo4j.close()
     await redis.close()
+    logger.info("%s 已关闭，连接池释放完成", settings.app_name)
 
 
 def create_app() -> FastAPI:
@@ -35,6 +56,8 @@ def create_app() -> FastAPI:
         allow_methods=["*"],
         allow_headers=["*"],
     )
+    # 请求上下文（request_id）中间件
+    app.add_middleware(RequestContextMiddleware)
 
     register_exception_handlers(app)
     app.include_router(api_router)

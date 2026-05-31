@@ -6,6 +6,9 @@ import {
   DeploymentUnitOutlined,
   HddOutlined,
   LogoutOutlined,
+  PictureOutlined,
+  SettingOutlined,
+  TagsOutlined,
   UserOutlined,
 } from '@ant-design/icons'
 import { Outlet, useLocation, useNavigate } from 'react-router-dom'
@@ -18,8 +21,11 @@ const menuItems = [
   { key: '/', icon: <AppstoreOutlined />, label: '仪表盘' },
   { key: '/chat', icon: <CommentOutlined />, label: '对话' },
   { key: '/knowledge', icon: <BookOutlined />, label: '知识库' },
+  { key: '/images', icon: <PictureOutlined />, label: '图片库' },
   { key: '/memory', icon: <HddOutlined />, label: '记忆' },
   { key: '/graph', icon: <DeploymentUnitOutlined />, label: '知识图谱' },
+  { key: '/tags', icon: <TagsOutlined />, label: '标签管理' },
+  { key: '/settings/models', icon: <SettingOutlined />, label: '模型配置' },
 ]
 
 export default function MainLayout() {
@@ -37,7 +43,7 @@ export default function MainLayout() {
   return (
     <Layout style={{ height: '100vh' }}>
       <Sider
-        width={216}
+        width={232}
         style={{
           overflow: 'hidden',
           borderInlineEnd: '1px solid #f0f0f0',
@@ -45,7 +51,7 @@ export default function MainLayout() {
       >
         <div
           style={{
-            height: 60,
+            height: 64,
             display: 'flex',
             alignItems: 'center',
             gap: 10,
@@ -55,21 +61,21 @@ export default function MainLayout() {
         >
           <div
             style={{
-              width: 30,
-              height: 30,
-              borderRadius: 8,
+              width: 36,
+              height: 36,
+              borderRadius: 9,
               background: 'linear-gradient(135deg, #155EEF, #5B8DEF)',
               display: 'flex',
               alignItems: 'center',
               justifyContent: 'center',
               fontWeight: 700,
-              fontSize: 16,
+              fontSize: 19,
               color: '#fff',
             }}
           >
             彗
           </div>
-          <span style={{ fontWeight: 600, fontSize: 17 }}>彗记 Comet</span>
+          <span style={{ fontWeight: 600, fontSize: 19 }}>彗记 Comet</span>
         </div>
         <Menu
           mode="inline"
@@ -89,7 +95,7 @@ export default function MainLayout() {
             borderBottom: '1px solid #f0f0f0',
           }}
         >
-          <span style={{ color: '#667085', fontSize: 14 }}>
+          <span style={{ color: '#667085', fontSize: 15 }}>
             个人 AI 知识库与记忆助手
           </span>
           <Dropdown

@@ -1,0 +1,105 @@
+===任务===
+从给定的陈述句中抽取「实体」与「知识三元组（主语-谓词-宾语）」。只输出合法 JSON。
+
+===重要规则===
+- `name`、`subject_name`、`object_name` 默认保持原文表面形式，不要翻译。
+- 抽取前先做指代解析：用户自指（"我""我的""我自己"）一律规范为「用户」；用户本人实体的 `name` 必须始终是「用户」。
+- 其他代词/指示词（"他""她""它""这个""那家""这里"）若能从上下文稳定解析出具体指代，则替换为具体实体名；不能稳定解析则整条跳过，返回空结果。
+- 命名关系中新出现的称呼、别名、昵称、产品名保持原样。
+- `description` 必须使用中文，简洁、能区分实体。
+- `type` 必须使用下方预定义的中文实体类型标签；`predicate` 必须使用下方预定义的中文关系谓词标签；不要发明新类型/新谓词。
+- 每个 triplet 必须输出 `predicate_surface`：原文中表达该关系的关系短语；没有更贴近的就用 canonical `predicate`。
+- 每个 triplet 必须携带 `valid_at` 和 `invalid_at`，直接复制输入中的同名字段，不要自行推断。
+
+===输入===
+陈述句：
+"""
+{{ statement }}
+"""
+{% if context %}
+背景上下文（仅用于理解指代，不作为抽取来源）：
+"""
+{{ context }}
+"""
+{% endif %}
+- valid_at: {{ valid_at | default("NULL") }}
+- invalid_at: {{ invalid_at | default("NULL") }}
+- dialog_at: {{ dialog_at | default("NULL") }}
+
+===预定义实体类型===
+只能使用以下中文实体类型，没有完全匹配的就选最接近的一项：
+{% for name, definition in entity_types.items() %}
+- `{{ name }}`：{{ definition }}
+{% endfor %}
+
+实体抽取总规则：
+- 不要把完整命题、因果链、价值判断、口号式表达拆成多个低价值实体（如"努力就会有回报"不应抽出"努力""回报"）。
+- 普通时间表达（日期、明天、今晚八点）、一次性动作短语、情绪/心理状态（紧张、开心）默认不作为独立实体。
+- 实体 `name` 要尽量具体，避免同名同类型误合并；用户拥有/关联的实体用完整所有格或稳定限定（如「用户的小狗」「用户的GitHub账号」），不要简化成「小狗」「账号」。
+- 若有值得保留的实体但无有效关系，可只返回 entities，triplets 设为 []。
+
+===预定义关系谓词===
+只能使用以下中文关系谓词，没有完全匹配的就选最接近的一项：
+{% for name, definition in predicates.items() %}
+- `{{ name }}`：{{ definition }}
+{% endfor %}
+
+关系抽取规则：
+- 只有陈述中表达了清晰关系时才抽取 (subject, predicate, object)。
+- `别名属于` 方向始终是 别名 → 别名属于 → 规范实体；规范实体是「被命名的那个实体」本身。
+- `关联于` 是受限弱关系，不得用来连接抽象概念、口号或仅为补全结构的关系。
+- 不要把普通时间表达作为 triplet 的宾语。
+- `subject_name` 必须与 `subject_id` 指向实体的 `name` 完全一致；`object_name` 同理。
+
+===示例===
+陈述："用户住在巴黎。"（dialog_at = 2025-04-10T14:30:00Z）
+输出：
+{
+  "entities": [
+    {"entity_idx": 0, "name": "用户", "type": "生命体", "description": "居住在巴黎的用户"},
+    {"entity_idx": 1, "name": "巴黎", "type": "地点设施", "description": "用户居住的城市"}
+  ],
+  "triplets": [
+    {"subject_name": "用户", "subject_id": 0, "predicate": "位于", "predicate_surface": "住在", "object_name": "巴黎", "object_id": 1, "value": null, "valid_at": "NULL", "invalid_at": "NULL"}
+  ]
+}
+
+陈述："用户的GitHub用户名是chen4。"
+输出：
+{
+  "entities": [
+    {"entity_idx": 0, "name": "用户", "type": "生命体", "description": "拥有该GitHub账号的用户"},
+    {"entity_idx": 1, "name": "用户的GitHub账号", "type": "识别联系信息", "description": "用户拥有的GitHub账号"},
+    {"entity_idx": 2, "name": "chen4", "type": "识别联系信息", "description": "用户GitHub账号的用户名"}
+  ],
+  "triplets": [
+    {"subject_name": "用户", "subject_id": 0, "predicate": "拥有", "predicate_surface": "的", "object_name": "用户的GitHub账号", "object_id": 1, "value": null, "valid_at": "NULL", "invalid_at": "NULL"},
+    {"subject_name": "用户的GitHub账号", "subject_id": 1, "predicate": "拥有", "predicate_surface": "用户名是", "object_name": "chen4", "object_id": 2, "value": null, "valid_at": "NULL", "invalid_at": "NULL"}
+  ]
+}
+
+陈述："用户认为努力就会有回报。"
+输出：
+{
+  "entities": [
+    {"entity_idx": 0, "name": "用户", "type": "生命体", "description": "认为努力就会有回报的用户"}
+  ],
+  "triplets": []
+}
+
+===输出格式===
+- 使用标准 ASCII 双引号，字符串内引号转义为 \"，不使用中文引号，字符串值内不要换行。
+- 若指代无法稳定解析，返回 `{"entities": [], "triplets": []}`。
+- 若无有效关系，triplets 返回 []。
+
+输出 JSON 结构：
+```json
+{
+  "entities": [
+    {"entity_idx": 0, "name": "string", "type": "string", "description": "string"}
+  ],
+  "triplets": [
+    {"subject_name": "string", "subject_id": 0, "predicate": "string", "predicate_surface": "string", "object_name": "string", "object_id": 0, "value": "string | null", "valid_at": "ISO8601 | NULL", "invalid_at": "ISO8601 | NULL"}
+  ]
+}
+```

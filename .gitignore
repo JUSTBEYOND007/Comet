@@ -51,3 +51,4 @@ temp/
 api/celerybeat-schedule.dir
 api/celerybeat-schedule.dat
 web/tsconfig.tsbuildinfo
+api/celerybeat-schedule.bak

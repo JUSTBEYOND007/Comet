@@ -11,6 +11,7 @@ from app.controllers import (
     chat_controller,
     dashboard_controller,
     document_controller,
+    emotion_controller,
     favorite_controller,
     file_controller,
     health_controller,
@@ -39,3 +40,4 @@ api_router.include_router(tool_controller.router)
 api_router.include_router(search_controller.router)
 api_router.include_router(favorite_controller.router)
 api_router.include_router(dashboard_controller.router)
+api_router.include_router(emotion_controller.router)

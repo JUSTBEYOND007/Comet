@@ -19,6 +19,12 @@ import {
   type MemoryStatsData,
   type OverviewData,
 } from '@/api/dashboard'
+import {
+  emotionApi,
+  type EmotionDistributionItem,
+  type EmotionProfile,
+  type EmotionTrendPoint,
+} from '@/api/emotion'
 import { useAuthStore } from '@/stores/authStore'
 
 interface HealthData {
@@ -39,6 +45,9 @@ export default function HomePage() {
   const [review, setReview] = useState<DailyReview | null>(null)
   const [overview, setOverview] = useState<OverviewData | null>(null)
   const [memStats, setMemStats] = useState<MemoryStatsData | null>(null)
+  const [emotionProfile, setEmotionProfile] = useState<EmotionProfile | null>(null)
+  const [emotionTrend, setEmotionTrend] = useState<EmotionTrendPoint[]>([])
+  const [emotionDist, setEmotionDist] = useState<EmotionDistributionItem[]>([])
   const [loading, setLoading] = useState(false)
 
   useEffect(() => {
@@ -63,6 +72,19 @@ export default function HomePage() {
       dashboardApi
         .dailyReview()
         .then(({ data }) => setReview(data))
+        .catch(() => {})
+      // 情绪数据（失败不致命）
+      emotionApi
+        .current()
+        .then(({ data }) => setEmotionProfile(data))
+        .catch(() => {})
+      emotionApi
+        .trend(14)
+        .then(({ data }) => setEmotionTrend(data.points))
+        .catch(() => {})
+      emotionApi
+        .distribution(30)
+        .then(({ data }) => setEmotionDist(data.items))
         .catch(() => {})
     })()
   }, [])
@@ -108,6 +130,53 @@ export default function HomePage() {
       },
     ],
   }
+
+  // 情绪趋势：valence（效价 -1~1）+ arousal（唤醒度 0~1）双线
+  const emotionTrendOption = {
+    tooltip: { trigger: 'axis' },
+    legend: { data: ['效价', '唤醒度'], top: 0 },
+    grid: { left: 36, right: 16, top: 32, bottom: 28 },
+    xAxis: {
+      type: 'category',
+      data: emotionTrend.map((t) => t.date.slice(5)),
+    },
+    yAxis: { type: 'value', min: -1, max: 1 },
+    series: [
+      {
+        name: '效价',
+        type: 'line',
+        smooth: true,
+        connectNulls: true,
+        data: emotionTrend.map((t) => (t.count > 0 ? t.avg_valence : null)),
+        itemStyle: { color: '#369F21' },
+        areaStyle: { opacity: 0.1 },
+      },
+      {
+        name: '唤醒度',
+        type: 'line',
+        smooth: true,
+        connectNulls: true,
+        data: emotionTrend.map((t) => (t.count > 0 ? t.avg_arousal : null)),
+        itemStyle: { color: '#FF8A34' },
+      },
+    ],
+  }
+
+  const emotionPieOption = {
+    tooltip: { trigger: 'item' },
+    legend: { bottom: 0, type: 'scroll' },
+    series: [
+      {
+        type: 'pie',
+        radius: ['40%', '68%'],
+        center: ['50%', '44%'],
+        data: emotionDist,
+        label: { show: false },
+      },
+    ],
+  }
+
+  const hasEmotion = (emotionProfile?.sample_count ?? 0) > 0
 
   return (
     <div className="fluid-page">
@@ -175,6 +244,62 @@ export default function HomePage() {
         <Col xs={24} md={12}>
           <Card title="近 14 天记忆新增">
             <ReactECharts option={lineOption} style={{ height: 280 }} />
+          </Card>
+        </Col>
+      </Row>
+
+      {/* 情绪画像区 */}
+      <Row gutter={[16, 16]} style={{ marginBottom: 24 }}>
+        <Col xs={24} md={6}>
+          <Card title="情绪健康指数">
+            {hasEmotion ? (
+              <div style={{ textAlign: 'center' }}>
+                <div
+                  style={{
+                    fontSize: 44,
+                    fontWeight: 700,
+                    color:
+                      (emotionProfile?.health_index ?? 0) >= 60
+                        ? '#369F21'
+                        : (emotionProfile?.health_index ?? 0) >= 40
+                          ? '#FF8A34'
+                          : '#FF5D34',
+                  }}
+                >
+                  {emotionProfile?.health_index ?? 0}
+                </div>
+                <div style={{ color: '#667085', marginBottom: 12 }}>满分 100</div>
+                <div style={{ fontSize: 15 }}>
+                  当前主导情绪：
+                  <span style={{ fontWeight: 600, color: '#155EEF' }}>
+                    {emotionProfile?.dominant_emotion}
+                  </span>
+                </div>
+                <div style={{ color: '#98A2B3', fontSize: 12, marginTop: 6 }}>
+                  基于最近 {emotionProfile?.sample_count} 条情绪记录
+                </div>
+              </div>
+            ) : (
+              <Empty description="多聊几句，AI 会感知你的情绪" />
+            )}
+          </Card>
+        </Col>
+        <Col xs={24} md={10}>
+          <Card title="近 14 天情绪趋势">
+            {hasEmotion ? (
+              <ReactECharts option={emotionTrendOption} style={{ height: 260 }} />
+            ) : (
+              <Empty description="暂无情绪数据" />
+            )}
+          </Card>
+        </Col>
+        <Col xs={24} md={8}>
+          <Card title="近 30 天情绪分布">
+            {emotionDist.length ? (
+              <ReactECharts option={emotionPieOption} style={{ height: 260 }} />
+            ) : (
+              <Empty description="暂无情绪数据" />
+            )}
           </Card>
         </Col>
       </Row>

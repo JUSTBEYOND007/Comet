@@ -17,6 +17,13 @@ logger = get_logger(__name__)
 
 @asynccontextmanager
 async def lifespan(_: FastAPI):
+    # 启动：自动把数据库升级到最新迁移（alembic upgrade head）
+    from app.db.migrate import upgrade_to_head
+
+    try:
+        await upgrade_to_head()
+    except Exception as e:
+        logger.error("数据库自动迁移失败，请检查迁移脚本或手动执行 alembic upgrade head: %s", e)
     # 启动：初始化 ES 索引
     from app.core.rag.es_index import ensure_index
 

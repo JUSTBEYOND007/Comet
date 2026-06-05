@@ -198,6 +198,10 @@ class ChatService:
         # 回答后异步萃取记忆（对话自动萃取，不阻塞用户：仅落库+派发，萃取在 worker）
         await self._dispatch_memory(user_id, user_text)
 
+        # 回答后异步分析用户情绪（重新生成时跳过，避免对同一句话重复分析）
+        if not skip_user_message:
+            self._dispatch_emotion(user_id, user_text, conv.id, assistant_msg.id)
+
         yield _sse(
             "done",
             {"conversation_id": str(conv.id), "message_id": str(assistant_msg.id)},
@@ -283,6 +287,26 @@ class ChatService:
             extract_memory_task.delay(str(memory.id))
         except Exception as e:
             logger.warning("对话记忆萃取派发失败（忽略）: %s", e)
+
+    def _dispatch_emotion(
+        self,
+        user_id: uuid.UUID,
+        user_text: str,
+        conversation_id: uuid.UUID,
+        message_id: uuid.UUID,
+    ) -> None:
+        """派发本轮用户发言的情绪分析任务（异步，仅入队）。失败不影响问答。"""
+        text = (user_text or "").strip()
+        if not text:
+            return
+        try:
+            from app.tasks.emotion import analyze_emotion_task
+
+            analyze_emotion_task.delay(
+                str(user_id), text, str(conversation_id), str(message_id)
+            )
+        except Exception as e:
+            logger.warning("情绪分析派发失败（忽略）: user=%s err=%s", user_id, e)
 
     # ── 消息反馈 / 重新生成 ──
 

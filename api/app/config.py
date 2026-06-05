@@ -86,6 +86,11 @@ class Settings(BaseSettings):
     global_search_min_vector_score: float = 0.45
     memory_search_min_vector_score: float = 0.45
 
+    # 情绪记忆：对话后情绪分析强度阈值（低于此值的弱情绪丢弃，不入库）
+    emotion_min_intensity: float = 0.15
+    # 当前情绪画像聚合窗口：取最近 N 条情绪记录做平均
+    emotion_profile_window: int = 20
+
     @property
     def database_url(self) -> str:
         return (

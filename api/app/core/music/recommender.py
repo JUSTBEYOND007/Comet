@@ -4,7 +4,6 @@
 纯打分，不调 LLM；推荐语用模板生成。
 """
 import math
-import random
 from dataclasses import dataclass
 
 from app.models.song_model import Song
@@ -15,8 +14,6 @@ _MAX_DIST = math.sqrt(5.0)
 _EMOTION_WEIGHT = 0.7
 # 偏好歌手命中加权
 _ARTIST_BONUS = 0.3
-# 从 top-N 里随机取一首，避免每次同一首
-_RANDOM_POOL = 3
 
 
 @dataclass
@@ -69,26 +66,6 @@ def score_songs(
     return scored
 
 
-def pick_song(
-    songs: list[Song],
-    *,
-    target_valence: float,
-    target_arousal: float,
-    preferred_artists: set[str],
-) -> ScoredSong | None:
-    """从曲库选一首：top-N 里随机取一首。空曲库返回 None。"""
-    scored = score_songs(
-        songs,
-        target_valence=target_valence,
-        target_arousal=target_arousal,
-        preferred_artists=preferred_artists,
-    )
-    if not scored:
-        return None
-    pool = scored[: min(_RANDOM_POOL, len(scored))]
-    return random.choice(pool)
-
-
 def build_reason(
     picked: ScoredSong, *, dominant_emotion: str
 ) -> str:
@@ -100,4 +77,4 @@ def build_reason(
     return f"此刻心情{dominant_emotion}，为你挑了一首{name}"
 
 
-__all__ = ["ScoredSong", "score_songs", "pick_song", "build_reason"]
+__all__ = ["ScoredSong", "score_songs", "build_reason"]

@@ -11,6 +11,7 @@ export interface UserInfo {
   id: string
   username: string
   email: string | null
+  avatar: string | null
   created_at: string
 }
 
@@ -43,6 +44,13 @@ export const authApi = {
     return client.put<unknown, Wrapped<null>>('/auth/password', {
       old_password: oldPassword,
       new_password: newPassword,
+    })
+  },
+  uploadAvatar(file: File) {
+    const form = new FormData()
+    form.append('file', file)
+    return client.post<unknown, Wrapped<UserInfo>>('/auth/avatar', form, {
+      headers: { 'Content-Type': 'multipart/form-data' },
     })
   },
 }

@@ -12,7 +12,7 @@ from app.core.logging import get_logger
 from app.models.conversation_model import ROLE_USER, Conversation, Message
 from app.models.daily_review_model import DailyReview
 from app.models.document_model import Document
-from app.models.memory_model import MEMORY_SOURCE_MANUAL, Memory
+from app.models.memory_model import Memory
 
 logger = get_logger(__name__)
 
@@ -57,7 +57,6 @@ class DailyReviewService:
         mem_rows = await self.session.execute(
             select(Memory.raw_text).where(
                 Memory.user_id == user_id,
-                Memory.source == MEMORY_SOURCE_MANUAL,
                 Memory.created_at >= start,
                 Memory.created_at <= end,
             )
@@ -94,39 +93,65 @@ class DailyReviewService:
             )
         prompt = _PROMPT.format(
             messages="；".join(data["messages"][:20]) or "（无）",
-            memories="；".join(data["memories"]) or "（无）",
+            memories="；".join(data["memories"][:30]) or "（无）",
             documents="、".join(data["documents"]) or "（无）",
         )
+        fallback = (
+            f"今天有 {len(data['messages'])} 次提问、"
+            f"记住了 {len(data['memories'])} 件事、"
+            f"新增了 {len(data['documents'])} 份文档。"
+        )
         try:
-            return await client.chat(
-                [{"role": "user", "content": prompt}], temperature=0.6, max_tokens=400
+            text = await client.chat(
+                [{"role": "user", "content": prompt}], temperature=0.6, max_tokens=600
             )
+            # 模型可能返回 None / 空白（如把输出放进 reasoning 字段、token 不足），兜底
+            if text and text.strip():
+                return text.strip()
+            logger.warning("每日回顾生成内容为空，用兜底文案")
+            return fallback
         except Exception as e:
             logger.warning("每日回顾生成失败，用兜底文案: %s", e)
-            return (
-                f"今天有 {len(data['messages'])} 次提问、"
-                f"记住了 {len(data['memories'])} 件事、"
-                f"新增了 {len(data['documents'])} 份文档。"
-            )
+            return fallback
 
     async def get_or_generate(self, user_id: uuid.UUID, day: date | None = None) -> dict:
-        """取当天回顾，没有则现场生成并落库。"""
+        """生成/刷新当天回顾。
+
+        每次进入仪表盘都按当前最新活动重新采集：
+        - 当天数据有变化（统计数变了）就重新生成并覆盖；
+        - 数据没变则复用已有回顾，避免重复调用 LLM。
+        """
         day = day or date.today()
         existing = await self.session.scalar(
             select(DailyReview).where(
                 DailyReview.user_id == user_id, DailyReview.review_date == day
             )
         )
-        if existing:
-            return self.to_out_dict(existing)
 
         data = await self._collect(user_id, day)
-        content = await self._generate_content(user_id, data)
         stats = {
             "messages": len(data["messages"]),
             "memories": len(data["memories"]),
             "documents": len(data["documents"]),
         }
+
+        if (
+            existing
+            and existing.content
+            and existing.content.strip()
+            and self._same_stats(existing.stats, stats)
+        ):
+            # 已有非空回顾且活动数据无变化，直接复用，不重复调用 LLM
+            return self.to_out_dict(existing)
+
+        content = await self._generate_content(user_id, data)
+        if existing:
+            existing.content = content
+            existing.stats = stats
+            await self.session.commit()
+            await self.session.refresh(existing)
+            return self.to_out_dict(existing)
+
         review = DailyReview(
             user_id=user_id, review_date=day, content=content, stats=stats
         )
@@ -134,6 +159,14 @@ class DailyReviewService:
         await self.session.commit()
         await self.session.refresh(review)
         return self.to_out_dict(review)
+
+    @staticmethod
+    def _same_stats(old: dict | None, new: dict) -> bool:
+        old = old or {}
+        return all(
+            int(old.get(k, 0) or 0) == int(new.get(k, 0) or 0)
+            for k in ("messages", "memories", "documents")
+        )
 
     @staticmethod
     def to_out_dict(review: DailyReview) -> dict:

@@ -32,3 +32,9 @@ class UserRepository:
         await self.session.commit()
         await self.session.refresh(user)
         return user
+
+    async def update_avatar(self, user: User, avatar: str) -> User:
+        user.avatar = avatar
+        await self.session.commit()
+        await self.session.refresh(user)
+        return user

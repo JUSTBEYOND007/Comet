@@ -1,9 +1,10 @@
-"""鉴权路由：注册 / 登录 / 刷新 / 退出 / 当前用户 / 改密。"""
-from fastapi import APIRouter, Depends
+"""鉴权路由：注册 / 登录 / 刷新 / 退出 / 当前用户 / 改密 / 头像。"""
+from fastapi import APIRouter, Depends, File, UploadFile
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.dependencies import get_current_user
 from app.core.response import success
+from app.core.storage import get_storage
 from app.db.postgres import get_session
 from app.models.user_model import User
 from app.schemas.auth_schema import (
@@ -17,6 +18,14 @@ from app.schemas.auth_schema import (
 from app.services.auth_service import AuthService
 
 router = APIRouter(prefix="/auth", tags=["auth"])
+
+
+def _user_out(user: User) -> dict:
+    """用户输出：把头像 file_key 转成可访问 URL。"""
+    data = UserOut.model_validate(user).model_dump(mode="json")
+    if user.avatar:
+        data["avatar"] = get_storage().get_url(user.avatar)
+    return data
 
 
 @router.post("/register")
@@ -51,7 +60,7 @@ async def logout(_: User = Depends(get_current_user)):
 
 @router.get("/me")
 async def me(user: User = Depends(get_current_user)):
-    return success(UserOut.model_validate(user).model_dump(mode="json"))
+    return success(_user_out(user))
 
 
 @router.put("/password")
@@ -64,3 +73,16 @@ async def change_password(
         user, body.old_password, body.new_password
     )
     return success(message="密码修改成功")
+
+
+@router.post("/avatar")
+async def upload_avatar(
+    file: UploadFile = File(...),
+    user: User = Depends(get_current_user),
+    session: AsyncSession = Depends(get_session),
+):
+    content = await file.read()
+    updated = await AuthService(session).update_avatar(
+        user, file.filename or "avatar.png", content
+    )
+    return success(_user_out(updated), "头像更新成功")

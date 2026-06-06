@@ -1,5 +1,6 @@
-"""鉴权业务服务：注册、登录、刷新、改密。"""
+"""鉴权业务服务：注册、登录、刷新、改密、头像。"""
 import uuid
+from pathlib import Path
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -12,10 +13,14 @@ from app.core.security import (
     hash_password,
     verify_password,
 )
+from app.core.storage import build_file_key, get_storage
 from app.models.user_model import User
 from app.repositories.user_repository import UserRepository
 
 logger = get_logger(__name__)
+
+_AVATAR_EXTS = {".jpg", ".jpeg", ".png", ".webp", ".gif"}
+_AVATAR_MAX = 5 * 1024 * 1024  # 5MB
 
 
 class AuthService:
@@ -59,3 +64,16 @@ class AuthService:
             raise BizError("原密码错误", code=1005, status_code=400)
         await self.repo.update_password(user, hash_password(new_password))
         logger.info("用户修改密码成功: id=%s", user.id)
+
+    async def update_avatar(self, user: User, file_name: str, content: bytes) -> User:
+        """上传头像：校验 → 存对象存储 → 回写 file_key。"""
+        ext = Path(file_name).suffix.lower()
+        if ext not in _AVATAR_EXTS:
+            raise BizError(f"不支持的图片类型: {ext}", code=1006)
+        if len(content) > _AVATAR_MAX:
+            raise BizError("头像超过 5MB 限制", code=1007)
+        file_key = build_file_key(str(user.id), "avatars", uuid.uuid4().hex, ext)
+        await get_storage().save(file_key, content)
+        updated = await self.repo.update_avatar(user, file_key)
+        logger.info("用户更新头像: id=%s key=%s", user.id, file_key)
+        return updated

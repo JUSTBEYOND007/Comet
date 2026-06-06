@@ -36,4 +36,5 @@ class UserOut(BaseModel):
     id: uuid.UUID
     username: str
     email: str | None = None
+    avatar: str | None = None
     created_at: datetime

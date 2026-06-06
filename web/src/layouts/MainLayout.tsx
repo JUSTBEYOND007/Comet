@@ -17,6 +17,7 @@ import {
 } from '@ant-design/icons'
 import { Outlet, useLocation, useNavigate } from 'react-router-dom'
 import { useAuthStore } from '@/stores/authStore'
+import { AuthenticatedImage } from '@/components/AuthenticatedImage'
 import MusicPlayer from '@/components/MusicPlayer'
 import logo from '@/images/logo.png'
 
@@ -153,6 +154,13 @@ export default function MainLayout() {
             menu={{
               items: [
                 {
+                  key: 'profile',
+                  icon: <UserOutlined />,
+                  label: '个人中心',
+                  onClick: () => navigate('/profile'),
+                },
+                { type: 'divider' },
+                {
                   key: 'logout',
                   icon: <LogoutOutlined />,
                   label: '退出登录',
@@ -162,9 +170,22 @@ export default function MainLayout() {
             }}
           >
             <Space style={{ cursor: 'pointer' }}>
-              <Avatar size={30} style={{ background: '#155EEF' }}>
-                {user?.username?.[0]?.toUpperCase() ?? <UserOutlined />}
-              </Avatar>
+              {user?.avatar ? (
+                <AuthenticatedImage
+                  src={user.avatar}
+                  alt="头像"
+                  style={{
+                    width: 30,
+                    height: 30,
+                    borderRadius: '50%',
+                    objectFit: 'cover',
+                  }}
+                />
+              ) : (
+                <Avatar size={30} style={{ background: '#155EEF' }}>
+                  {user?.username?.[0]?.toUpperCase() ?? <UserOutlined />}
+                </Avatar>
+              )}
               <span style={{ fontWeight: 500, color: immersive ? '#fff' : undefined }}>
                 {user?.username ?? '用户'}
               </span>

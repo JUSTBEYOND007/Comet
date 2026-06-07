@@ -79,7 +79,7 @@ export default function MainLayout() {
   }
 
   return (
-    <Layout style={{ height: '100vh' }} className={immersive ? 'immersive-layout' : ''}>
+    <Layout style={{ height: '100%' }} className={immersive ? 'immersive-layout' : ''}>
       <Sider
         width={236}
         style={{

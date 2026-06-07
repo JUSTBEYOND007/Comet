@@ -10,6 +10,14 @@ body,
   height: 100%;
 }
 
+/* 全局整体缩放：在浏览器 100% 缩放下得到舒适比例，
+   统一缩放包括硬编码 px 的元素，避免逐个改 px。
+   配合下方把所有 100vh 改为 100%（跟随被缩放的容器），
+   不依赖视口高度计算，故不会出现底部留白或跨浏览器误差。 */
+#root {
+  zoom: 0.75;
+}
+
 body {
   font-family: 'PingFang SC', -apple-system, BlinkMacSystemFont, 'Segoe UI',
     Roboto, 'Microsoft YaHei', sans-serif;
@@ -680,7 +688,8 @@ body {
 /* ── 登录页：居中玻璃卡 + 入场动画 + 视差 ── */
 .auth-full {
   position: relative;
-  height: 100vh;
+  height: 100%;
+  min-height: 100vh;
   width: 100%;
   overflow: hidden;
   display: flex;

@@ -1,4 +1,4 @@
-import { Avatar, Dropdown, Input, Layout, Menu, Space, message } from 'antd'
+import { Avatar, Button, Drawer, Dropdown, Input, Layout, Menu, Space, message } from 'antd'
 import {
   AppstoreOutlined,
   BookOutlined,
@@ -7,6 +7,8 @@ import {
   DeploymentUnitOutlined,
   HddOutlined,
   LogoutOutlined,
+  MenuFoldOutlined,
+  MenuUnfoldOutlined,
   PictureOutlined,
   RobotOutlined,
   SearchOutlined,
@@ -15,6 +17,7 @@ import {
   ToolOutlined,
   UserOutlined,
 } from '@ant-design/icons'
+import { useEffect, useState } from 'react'
 import { Outlet, useLocation, useNavigate } from 'react-router-dom'
 import { useAuthStore } from '@/stores/authStore'
 import { AuthenticatedImage } from '@/components/AuthenticatedImage'
@@ -63,11 +66,35 @@ const menuItems = [
   },
 ]
 
+// 小屏（手机/窄平板）检测：≤768px 走抽屉式侧边栏
+function useIsMobile() {
+  const [isMobile, setIsMobile] = useState(
+    () => typeof window !== 'undefined' && window.innerWidth <= 768,
+  )
+  useEffect(() => {
+    const mq = window.matchMedia('(max-width: 768px)')
+    const handler = (e: MediaQueryListEvent) => setIsMobile(e.matches)
+    mq.addEventListener('change', handler)
+    return () => mq.removeEventListener('change', handler)
+  }, [])
+  return isMobile
+}
+
 export default function MainLayout() {
   const navigate = useNavigate()
   const location = useLocation()
   const user = useAuthStore((s) => s.user)
   const logout = useAuthStore((s) => s.logout)
+  const isMobile = useIsMobile()
+
+  // 桌面端：侧边栏折叠（窄条）；移动端：抽屉开关
+  const [collapsed, setCollapsed] = useState(false)
+  const [drawerOpen, setDrawerOpen] = useState(false)
+
+  // 切换路由后自动关闭移动端抽屉
+  useEffect(() => {
+    setDrawerOpen(false)
+  }, [location.pathname])
 
   // 音乐页沉浸式深色主题：进入 /music 整体变深色霓虹，离开自动恢复
   const immersive = location.pathname === '/music'
@@ -78,61 +105,99 @@ export default function MainLayout() {
     navigate('/login', { replace: true })
   }
 
+  // logo 头部（桌面 Sider 与移动抽屉共用）
+  const brand = (mini: boolean) => (
+    <div
+      style={{
+        height: 64,
+        flexShrink: 0,
+        display: 'flex',
+        alignItems: 'center',
+        gap: 10,
+        paddingInline: mini ? 0 : 20,
+        justifyContent: mini ? 'center' : 'flex-start',
+        color: immersive ? '#fff' : '#171719',
+        overflow: 'hidden',
+      }}
+    >
+      <img
+        src={logo}
+        alt="彗记"
+        style={{ width: 36, height: 36, borderRadius: 9, objectFit: 'cover', flexShrink: 0 }}
+      />
+      {!mini && (
+        <span style={{ fontWeight: 600, fontSize: 19, whiteSpace: 'nowrap' }}>彗记 Comet</span>
+      )}
+    </div>
+  )
+
+  const navMenu = (mini: boolean) => (
+    <Menu
+      mode="inline"
+      theme={immersive ? 'dark' : 'light'}
+      inlineCollapsed={mini}
+      selectedKeys={[location.pathname]}
+      items={menuItems}
+      onClick={({ key }) => navigate(key)}
+      style={{ borderInlineEnd: 'none', background: 'transparent' }}
+    />
+  )
+
   return (
     <Layout style={{ height: '100%' }} className={immersive ? 'immersive-layout' : ''}>
-      <Sider
-        width={236}
-        style={{
-          display: 'flex',
-          flexDirection: 'column',
-          borderInlineEnd: immersive
-            ? '1px solid rgba(255,255,255,0.08)'
-            : '1px solid #f0f0f0',
-          background: immersive
-            ? 'linear-gradient(180deg, #141633 0%, #0c0d18 100%)'
-            : undefined,
-          transition: 'background 0.4s',
-        }}
-      >
-        <div
+      {/* 桌面端：常驻可折叠侧边栏 */}
+      {!isMobile && (
+        <Sider
+          width={236}
+          collapsible
+          collapsed={collapsed}
+          trigger={null}
+          collapsedWidth={72}
           style={{
-            height: 64,
-            flexShrink: 0,
             display: 'flex',
-            alignItems: 'center',
-            gap: 10,
-            paddingInline: 20,
-            color: immersive ? '#fff' : '#171719',
+            flexDirection: 'column',
+            borderInlineEnd: immersive
+              ? '1px solid rgba(255,255,255,0.08)'
+              : '1px solid #f0f0f0',
+            background: immersive
+              ? 'linear-gradient(180deg, #141633 0%, #0c0d18 100%)'
+              : undefined,
+            transition: 'background 0.4s',
           }}
         >
-          <img
-            src={logo}
-            alt="彗记"
-            style={{ width: 36, height: 36, borderRadius: 9, objectFit: 'cover' }}
-          />
-          <span style={{ fontWeight: 600, fontSize: 19 }}>彗记 Comet</span>
-        </div>
-        <div style={{ flex: 1, overflowY: 'auto', paddingBottom: 12 }}>
-          <Menu
-            mode="inline"
-            theme={immersive ? 'dark' : 'light'}
-            selectedKeys={[location.pathname]}
-            items={menuItems}
-            onClick={({ key }) => navigate(key)}
-            style={{
-              borderInlineEnd: 'none',
-              background: 'transparent',
-            }}
-          />
-        </div>
-      </Sider>
+          {brand(collapsed)}
+          <div style={{ flex: 1, overflowY: 'auto', paddingBottom: 12 }}>{navMenu(collapsed)}</div>
+        </Sider>
+      )}
+
+      {/* 移动端：抽屉式侧边栏 */}
+      {isMobile && (
+        <Drawer
+          placement="left"
+          open={drawerOpen}
+          onClose={() => setDrawerOpen(false)}
+          width={236}
+          closable={false}
+          styles={{
+            body: { padding: 0 },
+            content: immersive
+              ? { background: 'linear-gradient(180deg, #141633 0%, #0c0d18 100%)' }
+              : undefined,
+          }}
+        >
+          {brand(false)}
+          <div style={{ overflowY: 'auto', paddingBottom: 12 }}>{navMenu(false)}</div>
+        </Drawer>
+      )}
+
       <Layout style={{ background: immersive ? '#0b0c16' : undefined, transition: 'background 0.4s' }}>
         <Header
           style={{
-            paddingInline: 24,
+            paddingInline: isMobile ? 12 : 24,
             display: 'flex',
             alignItems: 'center',
             justifyContent: 'space-between',
+            gap: 8,
             borderBottom: immersive
               ? '1px solid rgba(255,255,255,0.08)'
               : '1px solid #f0f0f0',
@@ -141,15 +206,34 @@ export default function MainLayout() {
             transition: 'background 0.4s',
           }}
         >
-          <Input.Search
-            placeholder="搜索文档、图片、记忆…"
-            allowClear
-            style={{ maxWidth: 420, width: '40vw' }}
-            onSearch={(v) => {
-              const q = v.trim()
-              if (q) navigate(`/search?q=${encodeURIComponent(q)}`)
-            }}
-          />
+          <Space size={isMobile ? 6 : 12} style={{ flex: 1, minWidth: 0 }}>
+            <Button
+              type="text"
+              aria-label="菜单"
+              icon={
+                isMobile ? (
+                  <MenuUnfoldOutlined />
+                ) : collapsed ? (
+                  <MenuUnfoldOutlined />
+                ) : (
+                  <MenuFoldOutlined />
+                )
+              }
+              onClick={() =>
+                isMobile ? setDrawerOpen(true) : setCollapsed((c) => !c)
+              }
+              style={{ color: immersive ? '#fff' : undefined, fontSize: 18, flexShrink: 0 }}
+            />
+            <Input.Search
+              placeholder="搜索文档、图片、记忆…"
+              allowClear
+              style={{ maxWidth: 420, width: isMobile ? '100%' : '40vw' }}
+              onSearch={(v) => {
+                const q = v.trim()
+                if (q) navigate(`/search?q=${encodeURIComponent(q)}`)
+              }}
+            />
+          </Space>
           <Dropdown
             menu={{
               items: [
@@ -169,7 +253,7 @@ export default function MainLayout() {
               ],
             }}
           >
-            <Space style={{ cursor: 'pointer' }}>
+            <Space style={{ cursor: 'pointer', flexShrink: 0 }}>
               {user?.avatar ? (
                 <AuthenticatedImage
                   src={user.avatar}
@@ -186,13 +270,15 @@ export default function MainLayout() {
                   {user?.username?.[0]?.toUpperCase() ?? <UserOutlined />}
                 </Avatar>
               )}
-              <span style={{ fontWeight: 500, color: immersive ? '#fff' : undefined }}>
-                {user?.username ?? '用户'}
-              </span>
+              {!isMobile && (
+                <span style={{ fontWeight: 500, color: immersive ? '#fff' : undefined }}>
+                  {user?.username ?? '用户'}
+                </span>
+              )}
             </Space>
           </Dropdown>
         </Header>
-        <Content style={{ padding: 24, overflow: 'auto' }}>
+        <Content style={{ padding: isMobile ? 14 : 24, overflow: 'auto' }}>
           <Outlet />
         </Content>
       </Layout>

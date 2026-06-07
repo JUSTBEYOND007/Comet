@@ -333,6 +333,7 @@ export default function ChatPage() {
 
   return (
     <div
+      className="chat-layout"
       style={{
         display: 'flex',
         height: '100%',

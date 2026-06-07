@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from 'react'
 import {
   Button,
+  Collapse,
   Empty,
   Popconfirm,
   Spin,
@@ -16,6 +17,7 @@ import {
   EditOutlined,
   GlobalOutlined,
   KeyOutlined,
+  LinkOutlined,
   PlusOutlined,
   StarFilled,
   ThunderboltOutlined,
@@ -27,7 +29,7 @@ import {
   type ModelType,
 } from '@/api/models'
 import ModelConfigModal from './modelConfig/ModelConfigModal'
-import { PROVIDER_OPTIONS, TYPE_LABEL } from './modelConfig/constants'
+import { PROVIDER_LINKS, PROVIDER_OPTIONS, TYPE_LABEL } from './modelConfig/constants'
 
 const PROVIDER_LABEL = Object.fromEntries(
   PROVIDER_OPTIONS.map((p) => [p.value, p.label]),
@@ -325,6 +327,69 @@ export default function ModelConfigPage() {
           新增配置
         </Button>
       </div>
+
+      <Collapse
+        defaultActiveKey={list.length === 0 ? ['guide'] : []}
+        style={{ marginBottom: 20, background: '#fff', borderRadius: 12 }}
+        items={[
+          {
+            key: 'guide',
+            label: (
+              <span style={{ fontWeight: 600 }}>
+                📖 配置流程说明 · 去哪里申请 API Key？
+              </span>
+            ),
+            children: (
+              <div>
+                <Typography.Paragraph style={{ marginBottom: 14, color: '#475467' }}>
+                  彗记不内置任何模型，需你自己填入大模型供应商的 API Key（密钥会
+                  <b>加密存储</b>，仅你可见）。按以下步骤配置：
+                </Typography.Paragraph>
+
+                <ol style={{ paddingLeft: 20, margin: '0 0 16px', color: '#475467', lineHeight: 2 }}>
+                  <li>
+                    选一个供应商（推荐<b>智谱</b>，注册送额度、模型类型最全），到其官网注册并创建 API Key。
+                  </li>
+                  <li>
+                    点右上角<b>「新增配置」</b>，选择模型类型与供应商，base_url 会自动带出默认值，填入模型名与 API Key。
+                  </li>
+                  <li>
+                    保存后点卡片上的<b>「测试」</b>验证连通，再点<b>「设默认」</b>把它设为该类型的默认模型。
+                  </li>
+                  <li>
+                    至少配置 <b>对话(chat)</b> 与 <b>向量(embedding)</b> 两类；想看图配
+                    <b>多模态</b>，想联网问答配<b>联网搜索</b>，想提升检索精度配 <b>rerank</b>。
+                  </li>
+                </ol>
+
+                <Typography.Text strong style={{ display: 'block', marginBottom: 10 }}>
+                  各供应商申请入口
+                </Typography.Text>
+                <div className="provider-link-grid">
+                  {PROVIDER_LINKS.map((p) => (
+                    <a
+                      key={p.label}
+                      className="provider-link"
+                      href={p.url}
+                      target="_blank"
+                      rel="noreferrer"
+                    >
+                      <div className="provider-link__head">
+                        <LinkOutlined />
+                        <span className="provider-link__name">{p.label}</span>
+                      </div>
+                      <div className="provider-link__desc">{p.desc}</div>
+                    </a>
+                  ))}
+                </div>
+                <Typography.Text type="secondary" style={{ fontSize: 12, marginTop: 12, display: 'block' }}>
+                  提示：以上为第三方平台地址，注册与计费以各平台为准；密钥请勿泄露给他人。
+                </Typography.Text>
+              </div>
+            ),
+          },
+        ]}
+      />
 
       <Spin spinning={loading}>
         {sorted.length === 0 && !loading ? (

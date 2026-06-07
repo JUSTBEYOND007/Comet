@@ -41,3 +41,46 @@ export const CAPABILITY_OPTIONS = [
   { label: 'Function Call（工具调用）', value: 'function_call' },
   { label: 'Vision（图片理解）', value: 'vision' },
 ]
+
+// 各供应商获取 API Key 的官网地址（密钥管理控制台）
+export const PROVIDER_LINKS: {
+  label: string
+  desc: string
+  url: string
+}[] = [
+  {
+    label: '智谱 AI',
+    desc: '国内，注册即送额度，chat / embedding / 多模态 / rerank 齐全，推荐新手首选',
+    url: 'https://open.bigmodel.cn/usercenter/apikeys',
+  },
+  {
+    label: 'DeepSeek',
+    desc: '国内，对话与推理性价比高，仅 chat（不提供向量模型）',
+    url: 'https://platform.deepseek.com/api_keys',
+  },
+  {
+    label: '通义千问（阿里云百炼）',
+    desc: '国内，chat / 多模态 / embedding / rerank 都有，OpenAI 兼容',
+    url: 'https://bailian.console.aliyun.com/?apiKey=1#/api-key',
+  },
+  {
+    label: '豆包（火山方舟）',
+    desc: '国内，字节跳动，chat / 多模态，需在控制台开通模型',
+    url: 'https://console.volcengine.com/ark',
+  },
+  {
+    label: 'OpenAI',
+    desc: '海外，需科学上网与海外支付，GPT 系列',
+    url: 'https://platform.openai.com/api-keys',
+  },
+  {
+    label: '百度千帆（联网搜索）',
+    desc: '联网搜索数据源，中文实时信息效果好',
+    url: 'https://console.bce.baidu.com/iam/#/iam/apikey/list',
+  },
+  {
+    label: 'Tavily（联网搜索）',
+    desc: '海外联网搜索，每月有免费额度',
+    url: 'https://app.tavily.com/home',
+  },
+]

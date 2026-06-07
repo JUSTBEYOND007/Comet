@@ -1,18 +1,18 @@
-import { useEffect, useState } from 'react'
-import { Alert, Badge, Card, Col, Empty, List, Row, Spin, Statistic } from 'antd'
+import { useEffect, useMemo, useState } from 'react'
+import { Button, Card, Col, Empty, Row, Spin, Tag } from 'antd'
 import {
+  ArrowRightOutlined,
   BookOutlined,
-  CloudServerOutlined,
-  ClusterOutlined,
+  CheckCircleFilled,
   CommentOutlined,
-  DatabaseOutlined,
+  CustomerServiceOutlined,
   DeploymentUnitOutlined,
   HddOutlined,
-  PictureOutlined,
-  ThunderboltOutlined,
+  RobotOutlined,
+  SettingOutlined,
 } from '@ant-design/icons'
+import { useNavigate } from 'react-router-dom'
 import ReactECharts from 'echarts-for-react'
-import client from '@/api/client'
 import {
   dashboardApi,
   type DailyReview,
@@ -25,29 +25,19 @@ import {
   type EmotionProfile,
   type EmotionTrendPoint,
 } from '@/api/emotion'
+import { modelApi, type ModelConfigItem } from '@/api/models'
 import { useAuthStore } from '@/stores/authStore'
 
-interface HealthData {
-  healthy: boolean
-  checks: Record<string, boolean>
-}
-
-const STORE_META: Record<string, { label: string; icon: React.ReactNode }> = {
-  postgres: { label: 'PostgreSQL', icon: <DatabaseOutlined /> },
-  elasticsearch: { label: 'Elasticsearch', icon: <CloudServerOutlined /> },
-  neo4j: { label: 'Neo4j', icon: <DeploymentUnitOutlined /> },
-  redis: { label: 'Redis', icon: <ThunderboltOutlined /> },
-}
-
 export default function HomePage() {
+  const navigate = useNavigate()
   const user = useAuthStore((s) => s.user)
-  const [health, setHealth] = useState<HealthData | null>(null)
   const [review, setReview] = useState<DailyReview | null>(null)
   const [overview, setOverview] = useState<OverviewData | null>(null)
   const [memStats, setMemStats] = useState<MemoryStatsData | null>(null)
   const [emotionProfile, setEmotionProfile] = useState<EmotionProfile | null>(null)
   const [emotionTrend, setEmotionTrend] = useState<EmotionTrendPoint[]>([])
   const [emotionDist, setEmotionDist] = useState<EmotionDistributionItem[]>([])
+  const [models, setModels] = useState<ModelConfigItem[] | null>(null)
   const [loading, setLoading] = useState(false)
 
   useEffect(() => {
@@ -65,15 +55,14 @@ export default function HomePage() {
       } finally {
         setLoading(false)
       }
-      client
-        .get<unknown, { data: HealthData }>('/health')
-        .then((hb) => setHealth(hb.data))
-        .catch(() => {})
+      modelApi
+        .list()
+        .then(({ data }) => setModels(data))
+        .catch(() => setModels([]))
       dashboardApi
         .dailyReview()
         .then(({ data }) => setReview(data))
         .catch(() => {})
-      // 情绪数据（失败不致命）
       emotionApi
         .current()
         .then(({ data }) => setEmotionProfile(data))
@@ -90,12 +79,60 @@ export default function HomePage() {
   }, [])
 
   const c = overview?.counts
-  const statCards = [
-    { label: '知识库文档', value: c?.documents ?? 0, icon: <BookOutlined />, color: '#155EEF' },
-    { label: '图片素材', value: c?.images ?? 0, icon: <PictureOutlined />, color: '#369F21' },
-    { label: '记忆实体', value: c?.entities ?? 0, icon: <HddOutlined />, color: '#7C4DFF' },
-    { label: '主题社区', value: c?.communities ?? 0, icon: <ClusterOutlined />, color: '#FF8A34' },
-    { label: '对话会话', value: c?.conversations ?? 0, icon: <CommentOutlined />, color: '#13C2C2' },
+
+  // 快速开始：根据已配置模型类型判断完成度
+  const modelTypes = useMemo(
+    () => new Set((models ?? []).map((m) => m.type)),
+    [models],
+  )
+  const hasChat = modelTypes.has('chat') || modelTypes.has('multimodal')
+  const hasEmbedding = modelTypes.has('embedding')
+  const hasDocs = (c?.documents ?? 0) > 0
+  const hasChatted = (c?.conversations ?? 0) > 0
+
+  const quickSteps = [
+    {
+      done: hasChat,
+      title: '配置对话模型',
+      icon: <SettingOutlined />,
+      desc: '前往「模型配置」添加 chat 模型并设为默认，这是问答、记忆萃取、情绪与音乐标注的基础。',
+      action: () => navigate('/settings/models'),
+      btn: hasChat ? '已配置' : '去配置',
+    },
+    {
+      done: hasEmbedding,
+      title: '配置向量模型',
+      icon: <SettingOutlined />,
+      desc: '添加 embedding（向量）模型，知识库与记忆的语义检索都依赖它。建议再配一个 rerank 提升精度。',
+      action: () => navigate('/settings/models'),
+      btn: hasEmbedding ? '已配置' : '去配置',
+    },
+    {
+      done: hasDocs,
+      title: '建立你的知识库',
+      icon: <BookOutlined />,
+      desc: '上传文档或导入网页，系统自动分块、向量化、打标签，之后即可被 AI 检索引用。',
+      action: () => navigate('/knowledge'),
+      btn: hasDocs ? '去管理' : '去上传',
+    },
+    {
+      done: hasChatted,
+      title: '开始智能对话',
+      icon: <CommentOutlined />,
+      desc: 'AI 会自动调用知识库、记忆、联网工具回答，并在对话后沉淀记忆，越用越懂你。',
+      action: () => navigate('/chat'),
+      btn: hasChatted ? '继续对话' : '去对话',
+    },
+  ]
+
+  // 功能导航
+  const features = [
+    { icon: <CommentOutlined />, label: '智能对话', desc: 'Agent 工具编排问答', to: '/chat', color: '#155EEF' },
+    { icon: <BookOutlined />, label: '知识库', desc: '文档/网页 RAG 检索', to: '/knowledge', color: '#369F21' },
+    { icon: <HddOutlined />, label: '记忆图谱', desc: '实体关系与画像', to: '/memory', color: '#7C4DFF' },
+    { icon: <DeploymentUnitOutlined />, label: '图谱可视化', desc: '关系网络与时间线', to: '/graph', color: '#FF8A34' },
+    { icon: <RobotOutlined />, label: 'Agent 配置', desc: '人设与工具开关', to: '/settings/agent', color: '#13C2C2' },
+    { icon: <CustomerServiceOutlined />, label: '情绪音乐', desc: '随心情推荐歌单', to: '/music', color: '#EB2F96' },
   ]
 
   const pieOption = {
@@ -104,10 +141,11 @@ export default function HomePage() {
     series: [
       {
         type: 'pie',
-        radius: ['40%', '68%'],
+        radius: ['42%', '70%'],
         center: ['50%', '44%'],
         data: overview?.tag_distribution ?? [],
         label: { show: false },
+        itemStyle: { borderColor: '#fff', borderWidth: 2 },
       },
     ],
   }
@@ -117,6 +155,7 @@ export default function HomePage() {
     grid: { left: 36, right: 16, top: 24, bottom: 28 },
     xAxis: {
       type: 'category',
+      boundaryGap: false,
       data: (memStats?.trend ?? []).map((t) => t.date.slice(5)),
     },
     yAxis: { type: 'value', minInterval: 1 },
@@ -125,13 +164,22 @@ export default function HomePage() {
         type: 'line',
         smooth: true,
         data: (memStats?.trend ?? []).map((t) => t.count),
-        areaStyle: { opacity: 0.12 },
+        areaStyle: {
+          color: {
+            type: 'linear',
+            x: 0, y: 0, x2: 0, y2: 1,
+            colorStops: [
+              { offset: 0, color: 'rgba(21,94,239,0.35)' },
+              { offset: 1, color: 'rgba(21,94,239,0.02)' },
+            ],
+          },
+        },
+        lineStyle: { width: 3 },
         itemStyle: { color: '#155EEF' },
       },
     ],
   }
 
-  // 情绪趋势：valence（效价 -1~1）+ arousal（唤醒度 0~1）双线
   const emotionTrendOption = {
     tooltip: { trigger: 'axis' },
     legend: { data: ['效价', '唤醒度'], top: 0 },
@@ -168,57 +216,137 @@ export default function HomePage() {
     series: [
       {
         type: 'pie',
-        radius: ['40%', '68%'],
+        radius: ['42%', '70%'],
         center: ['50%', '44%'],
         data: emotionDist,
         label: { show: false },
+        itemStyle: { borderColor: '#fff', borderWidth: 2 },
       },
     ],
   }
 
   const hasEmotion = (emotionProfile?.sample_count ?? 0) > 0
+  const allReady = hasChat && hasEmbedding
+  const finishedSteps = quickSteps.filter((s) => s.done).length
 
   return (
     <div className="fluid-page">
-      <Card
-        style={{
-          marginBottom: 24,
-          background: 'linear-gradient(120deg, #171719 0%, #1d2b53 100%)',
-          border: 'none',
-        }}
-        styles={{ body: { padding: '28px 32px' } }}
-      >
-        <h2 style={{ color: '#fff', margin: 0, fontSize: 24 }}>
-          你好，{user?.username ?? '朋友'} 👋
-        </h2>
-        <p style={{ color: 'rgba(255,255,255,0.7)', marginTop: 8, marginBottom: 0 }}>
-          欢迎使用彗记 Comet —— 你的个人 AI 知识库与记忆助手。
+      {/* 欢迎横幅 */}
+      <div className="dash-hero">
+        <h2 className="dash-hero__title">你好，{user?.username ?? '朋友'} 👋</h2>
+        <p className="dash-hero__sub">
+          欢迎使用彗记 Comet —— 你的个人 AI 知识库与记忆助手。让 AI 记住你、读懂你的资料。
         </p>
-      </Card>
-
-      {/* 数字卡片 */}
-      <Row gutter={[16, 16]} style={{ marginBottom: 24 }}>
-        {statCards.map((s) => (
-          <Col xs={12} sm={8} md={Math.floor(24 / 5) || 4} key={s.label} style={{ flex: 1 }}>
-            <Card styles={{ body: { padding: 18 } }}>
-              <Statistic
-                title={<span style={{ color: '#667085' }}>{s.icon} {s.label}</span>}
-                value={s.value}
-                valueStyle={{ color: s.color, fontWeight: 600 }}
-              />
-            </Card>
-          </Col>
-        ))}
-      </Row>
+      </div>
 
       {/* 今日回顾 */}
       <Card
-        title="今日回顾"
-        style={{ marginBottom: 24 }}
+        title="📅 今日回顾"
+        style={{ marginBottom: 22, borderRadius: 16 }}
         extra={
           review?.stats && (
             <span style={{ color: '#98A2B3', fontSize: 13 }}>
-              对话 {review.stats.messages} · 记忆 {review.stats.memories} · 文档 {review.stats.documents}
+              对话 {review.stats.messages} · 记忆 {review.stats.memories} · 文档{' '}
+              {review.stats.documents}
+            </span>
+          )
+        }
+      >
+        <p style={{ margin: 0, color: '#475467', lineHeight: 1.8, whiteSpace: 'pre-wrap' }}>
+          {review?.content ?? '加载中…'}
+        </p>
+      </Card>
+
+      {/* 快速开始 */}
+      <Card
+        style={{ marginBottom: 22, borderRadius: 16 }}
+        styles={{ body: { padding: 22 } }}
+        title={
+          <span>
+            🚀 快速开始
+            <span style={{ color: '#98A2B3', fontWeight: 400, fontSize: 13, marginLeft: 10 }}>
+              {finishedSteps}/{quickSteps.length} 已完成
+            </span>
+          </span>
+        }
+        extra={
+          allReady ? (
+            <Tag color="success" icon={<CheckCircleFilled />}>
+              基础配置已就绪
+            </Tag>
+          ) : (
+            <Tag color="warning">请先完成模型配置</Tag>
+          )
+        }
+      >
+        <Row gutter={[14, 14]}>
+          {quickSteps.map((step, i) => (
+            <Col xs={24} sm={12} lg={6} key={step.title}>
+              <div className={`qs-step${step.done ? ' qs-step--done' : ''}`}>
+                <div className="qs-step__num">
+                  {step.done ? <CheckCircleFilled /> : i + 1}
+                </div>
+                <div style={{ display: 'flex', flexDirection: 'column' }}>
+                  <div className="qs-step__title">
+                    {step.icon} {step.title}
+                  </div>
+                  <div className="qs-step__desc">{step.desc}</div>
+                  <Button
+                    type={step.done ? 'default' : 'primary'}
+                    size="small"
+                    style={{ marginTop: 10, alignSelf: 'flex-start' }}
+                    onClick={step.action}
+                  >
+                    {step.btn} <ArrowRightOutlined />
+                  </Button>
+                </div>
+              </div>
+            </Col>
+          ))}
+        </Row>
+      </Card>
+
+      {/* 功能导航 */}
+      <Card
+        title="✨ 功能一览"
+        style={{ marginBottom: 22, borderRadius: 16 }}
+        styles={{ body: { padding: 18 } }}
+      >
+        <Row gutter={[14, 14]}>
+          {features.map((f) => (
+            <Col xs={12} sm={8} md={8} lg={4} key={f.label}>
+              <div
+                className="qs-step"
+                style={{ cursor: 'pointer', alignItems: 'center' }}
+                onClick={() => navigate(f.to)}
+              >
+                <div
+                  className="stat-card__icon"
+                  style={{ background: `${f.color}1a`, color: f.color, marginBottom: 0 }}
+                >
+                  {f.icon}
+                </div>
+                <div>
+                  <div className="qs-step__title">{f.label}</div>
+                  <div className="qs-step__desc" style={{ marginTop: 2 }}>
+                    {f.desc}
+                  </div>
+                </div>
+              </div>
+            </Col>
+          ))}
+        </Row>
+      </Card>
+
+      {/* 今日回顾 */}
+      <Card
+        title="📅 今日回顾"
+        style={{ marginBottom: 22, borderRadius: 16 }}
+        extra={
+          review?.stats && (
+            <span style={{ color: '#98A2B3', fontSize: 13 }}>
+              对话 {review.stats.messages} · 记忆 {review.stats.memories} · 文档{' '}
+              {review.stats.documents}
             </span>
           )
         }
@@ -229,11 +357,13 @@ export default function HomePage() {
       </Card>
 
       {/* 图表区 */}
-      <Row gutter={[16, 16]} style={{ marginBottom: 24 }}>
+      <Row gutter={[16, 16]} style={{ marginBottom: 22 }}>
         <Col xs={24} md={12}>
-          <Card title="知识库分类分布">
+          <Card title="知识库分类分布" style={{ borderRadius: 16 }}>
             {loading ? (
-              <div style={{ textAlign: 'center', padding: 40 }}><Spin /></div>
+              <div style={{ textAlign: 'center', padding: 40 }}>
+                <Spin />
+              </div>
             ) : overview?.tag_distribution.length ? (
               <ReactECharts option={pieOption} style={{ height: 280 }} />
             ) : (
@@ -242,16 +372,16 @@ export default function HomePage() {
           </Card>
         </Col>
         <Col xs={24} md={12}>
-          <Card title="近 14 天记忆新增">
+          <Card title="近 14 天记忆新增" style={{ borderRadius: 16 }}>
             <ReactECharts option={lineOption} style={{ height: 280 }} />
           </Card>
         </Col>
       </Row>
 
       {/* 情绪画像区 */}
-      <Row gutter={[16, 16]} style={{ marginBottom: 24 }}>
+      <Row gutter={[16, 16]}>
         <Col xs={24} md={6}>
-          <Card title="情绪健康指数">
+          <Card title="情绪健康指数" style={{ borderRadius: 16 }}>
             {hasEmotion ? (
               <div style={{ textAlign: 'center' }}>
                 <div
@@ -285,7 +415,7 @@ export default function HomePage() {
           </Card>
         </Col>
         <Col xs={24} md={10}>
-          <Card title="近 14 天情绪趋势">
+          <Card title="近 14 天情绪趋势" style={{ borderRadius: 16 }}>
             {hasEmotion ? (
               <ReactECharts option={emotionTrendOption} style={{ height: 260 }} />
             ) : (
@@ -294,62 +424,11 @@ export default function HomePage() {
           </Card>
         </Col>
         <Col xs={24} md={8}>
-          <Card title="近 30 天情绪分布">
+          <Card title="近 30 天情绪分布" style={{ borderRadius: 16 }}>
             {emotionDist.length ? (
               <ReactECharts option={emotionPieOption} style={{ height: 260 }} />
             ) : (
               <Empty description="暂无情绪数据" />
-            )}
-          </Card>
-        </Col>
-      </Row>
-
-      {/* 最近活动 + 系统状态 */}
-      <Row gutter={[16, 16]}>
-        <Col xs={24} md={12}>
-          <Card title="最近活动">
-            {overview?.recent.length ? (
-              <List
-                size="small"
-                dataSource={overview.recent}
-                renderItem={(r) => (
-                  <List.Item>
-                    <BookOutlined style={{ color: '#155EEF', marginRight: 8 }} />
-                    {r.title}
-                    <span style={{ marginLeft: 'auto', color: '#98A2B3', fontSize: 12 }}>
-                      {r.time ? new Date(r.time).toLocaleDateString() : ''}
-                    </span>
-                  </List.Item>
-                )}
-              />
-            ) : (
-              <Empty description="暂无活动" />
-            )}
-          </Card>
-        </Col>
-        <Col xs={24} md={12}>
-          <Card title="系统状态">
-            {health ? (
-              <>
-                <Alert
-                  style={{ marginBottom: 16 }}
-                  type={health.healthy ? 'success' : 'warning'}
-                  showIcon
-                  message={health.healthy ? '所有存储服务运行正常' : '部分存储服务未就绪'}
-                />
-                <Row gutter={[12, 12]}>
-                  {Object.entries(health.checks).map(([name, ok]) => {
-                    const meta = STORE_META[name] ?? { label: name, icon: null }
-                    return (
-                      <Col xs={12} key={name}>
-                        <Badge status={ok ? 'success' : 'error'} text={<span>{meta.icon} {meta.label}</span>} />
-                      </Col>
-                    )
-                  })}
-                </Row>
-              </>
-            ) : (
-              <Spin />
             )}
           </Card>
         </Col>

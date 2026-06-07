@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { useEffect, useMemo, useRef, useState, type MouseEvent as ReactMouseEvent } from 'react'
 import { Slider, Spin, Tooltip } from 'antd'
 import {
   CaretRightOutlined,
@@ -76,8 +76,12 @@ export default function MusicPlayer() {
 
   const audioRef = useRef<HTMLAudioElement>(null)
   const lrcContainerRef = useRef<HTMLDivElement>(null)
+  const shellRef = useRef<HTMLDivElement>(null)
   const [current, setCurrent] = useState(0)
   const [duration, setDuration] = useState(0)
+  // 拖动位置：null 表示用默认（右下角）；非 null 用 left/top 固定
+  const [pos, setPos] = useState<{ x: number; y: number } | null>(null)
+  const dragRef = useRef<{ dx: number; dy: number } | null>(null)
   // 手机端窄屏：迷你态把传输控制并到歌名后面，整体更紧凑
   const [isMobile, setIsMobile] = useState(
     () => typeof window !== 'undefined' && window.innerWidth <= 768,
@@ -88,6 +92,47 @@ export default function MusicPlayer() {
     mq.addEventListener('change', handler)
     return () => mq.removeEventListener('change', handler)
   }, [])
+
+  // 拖动：按住顶部条移动播放器（仅桌面端）。
+  // 注意全局 #root 有 zoom 缩放，getBoundingClientRect 是屏幕像素、CSS left/top 是缩放前坐标，
+  // 二者差一个 zoom 比例，需换算，否则一拖就飞。
+  const onDragStart = (e: ReactMouseEvent) => {
+    if (isMobile) return
+    const target = e.target as HTMLElement
+    if (target.closest('.player-ctrl-btn, button, a, input, .ant-slider')) return
+    const el = shellRef.current
+    if (!el) return
+    const rect = el.getBoundingClientRect()
+    // zoom 比例 = 渲染宽(屏幕px) / 布局宽(CSS px)
+    const zoom = el.offsetWidth ? rect.width / el.offsetWidth : 1
+    // 起始位置换算到 CSS 坐标系
+    const startLeft = rect.left / zoom
+    const startTop = rect.top / zoom
+    const startMouseX = e.clientX
+    const startMouseY = e.clientY
+    dragRef.current = { dx: 0, dy: 0 }
+
+    const onMove = (ev: MouseEvent) => {
+      if (!dragRef.current) return
+      const cssW = el.offsetWidth
+      const cssH = el.offsetHeight
+      const viewW = window.innerWidth / zoom
+      const viewH = window.innerHeight / zoom
+      // 鼠标位移(屏幕px)换算回 CSS px
+      let x = startLeft + (ev.clientX - startMouseX) / zoom
+      let y = startTop + (ev.clientY - startMouseY) / zoom
+      x = Math.max(8, Math.min(x, viewW - cssW - 8))
+      y = Math.max(8, Math.min(y, viewH - cssH - 8))
+      setPos({ x, y })
+    }
+    const onUp = () => {
+      dragRef.current = null
+      window.removeEventListener('mousemove', onMove)
+      window.removeEventListener('mouseup', onUp)
+    }
+    window.addEventListener('mousemove', onMove)
+    window.addEventListener('mouseup', onUp)
+  }
 
   const audioSrc = useAuthedSrc(track?.url)
   const coverSrc = useAuthedSrc(track?.coverUrl)
@@ -212,11 +257,27 @@ export default function MusicPlayer() {
       )}
 
       <div
+        ref={shellRef}
         className={`player-shell ${light ? 'player-light' : ''}`}
-        style={{ width: expanded ? 360 : 312 }}
+        style={{
+          width: expanded ? 360 : 312,
+          ...(pos && !isMobile
+            ? { left: pos.x, top: pos.y, right: 'auto', bottom: 'auto' }
+            : {}),
+        }}
       >
         {/* 顶部条 */}
-        <div style={{ display: 'flex', alignItems: 'center', gap: 12, padding: 12 }}>
+        <div
+          onMouseDown={onDragStart}
+          style={{
+            display: 'flex',
+            alignItems: 'center',
+            gap: 12,
+            padding: 12,
+            cursor: isMobile ? 'default' : 'move',
+            userSelect: 'none',
+          }}
+        >
           {!expanded && disc}
           <div style={{ flex: 1, minWidth: 0 }}>
             <div

@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import {
   App,
   Button,
@@ -362,6 +362,11 @@ function AddSongModal({
   const [submitting, setSubmitting] = useState(false)
   const [searching, setSearching] = useState(false)
   const [hits, setHits] = useState<MiguSearchHit[]>([])
+  // 监听歌名/歌手，输入即自动搜索（防抖）
+  const watchTitle = Form.useWatch('title', form)
+  const watchArtist = Form.useWatch('artist', form)
+  // applyHit 回填表单会触发 watch，用此标记跳过紧随的自动搜索
+  const skipAutoRef = useRef(false)
 
   const reset = () => {
     form.resetFields()
@@ -371,8 +376,41 @@ function AddSongModal({
     setHits([])
   }
 
+  const doSearch = useCallback(
+    async (kw: string) => {
+      const q = kw.trim()
+      if (!q) return
+      setSearching(true)
+      try {
+        const { data } = await musicApi.searchMigu(q)
+        setHits(data)
+      } catch {
+        // 自动搜索失败静默，不打扰输入
+      } finally {
+        setSearching(false)
+      }
+    },
+    [],
+  )
+
+  // 输入防抖自动搜索：歌名/歌手变化 600ms 后触发
+  useEffect(() => {
+    if (!open) return
+    if (skipAutoRef.current) {
+      skipAutoRef.current = false
+      return
+    }
+    const kw = `${watchTitle || ''} ${watchArtist || ''}`.trim()
+    if (kw.length < 2) {
+      setHits([])
+      return
+    }
+    const timer = setTimeout(() => void doSearch(kw), 600)
+    return () => clearTimeout(timer)
+  }, [watchTitle, watchArtist, open, doSearch])
+
   const onSearch = async () => {
-    const kw = (form.getFieldValue('title') || '') + ' ' + (form.getFieldValue('artist') || '')
+    const kw = `${form.getFieldValue('title') || ''} ${form.getFieldValue('artist') || ''}`
     if (!kw.trim()) {
       message.warning('先填歌名或歌手')
       return
@@ -388,6 +426,7 @@ function AddSongModal({
   }
 
   const applyHit = (h: MiguSearchHit) => {
+    skipAutoRef.current = true
     form.setFieldsValue({ title: h.title, artist: h.artist, album: h.album })
     setCoverUrl(h.cover_url)
     setHits([])
@@ -442,10 +481,13 @@ function AddSongModal({
           <Input />
         </Form.Item>
 
-        <Space style={{ marginBottom: 12 }}>
+        <Space style={{ marginBottom: 12 }} align="center">
           <Button loading={searching} onClick={onSearch}>
             搜索带出封面/信息
           </Button>
+          <Text type="secondary" style={{ fontSize: 12 }}>
+            {searching ? '搜索中…' : '输入歌名/歌手会自动搜索'}
+          </Text>
           {coverUrl && (
             <img
               src={coverUrl}
@@ -459,7 +501,7 @@ function AddSongModal({
           <List
             size="small"
             bordered
-            style={{ marginBottom: 12, maxHeight: 180, overflow: 'auto' }}
+            style={{ marginBottom: 12, maxHeight: 220, overflow: 'auto' }}
             dataSource={hits}
             renderItem={(h) => (
               <List.Item
@@ -467,15 +509,29 @@ function AddSongModal({
                 onClick={() => applyHit(h)}
               >
                 <Space>
-                  {h.cover_url && (
+                  {h.cover_url ? (
                     <img
                       src={h.cover_url}
                       alt=""
-                      style={{ width: 32, height: 32, borderRadius: 4 }}
+                      style={{ width: 36, height: 36, borderRadius: 4, objectFit: 'cover' }}
+                    />
+                  ) : (
+                    <div
+                      style={{
+                        width: 36,
+                        height: 36,
+                        borderRadius: 4,
+                        background: 'rgba(255,255,255,0.1)',
+                      }}
                     />
                   )}
                   <span>{h.title}</span>
                   <Text type="secondary">{h.artist}</Text>
+                  {h.album && (
+                    <Text type="secondary" style={{ fontSize: 12, opacity: 0.7 }}>
+                      · {h.album}
+                    </Text>
+                  )}
                 </Space>
               </List.Item>
             )}

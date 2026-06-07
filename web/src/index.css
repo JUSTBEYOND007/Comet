@@ -761,6 +761,18 @@ body {
   -webkit-text-fill-color: #fff;
   transition: background-color 9999s;
 }
+/* 校验失败(error)状态也保持深底白字，避免白底白字看不见输入 */
+.auth-card .ant-input-affix-wrapper-status-error,
+.auth-card .ant-input-status-error,
+.auth-card .ant-input-affix-wrapper-status-error .ant-input {
+  background: rgba(255, 255, 255, 0.08) !important;
+  color: #fff !important;
+}
+.auth-card .ant-input-affix-wrapper-status-error input,
+.auth-card .ant-input-affix-wrapper input {
+  color: #fff !important;
+  -webkit-text-fill-color: #fff;
+}
 .auth-card .ant-tabs-tab {
   color: rgba(255, 255, 255, 0.6);
 }

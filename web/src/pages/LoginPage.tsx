@@ -70,6 +70,7 @@ export default function LoginPage() {
     >
       <Form.Item
         name="email"
+        validateTrigger="onBlur"
         rules={[
           { required: true, message: '请输入邮箱' },
           { type: 'email', message: '邮箱格式不正确' },

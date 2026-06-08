@@ -196,8 +196,13 @@ class MusicService:
 
         # 组成推荐队列（高分优先 + 队首随机打散），供播放器切歌
         queue = self._build_queue(ranked)
-        items = [self._to_out(c.song) for c in queue]
-        reason = build_reason(queue[0], dominant_emotion=dominant)
+        # 每首生成各自的推荐语，切歌时推荐语随之更新
+        items = []
+        for c in queue:
+            out = self._to_out(c.song)
+            out["reason"] = build_reason(c, dominant_emotion=dominant)
+            items.append(out)
+        reason = items[0]["reason"] if items else ""
         return {
             "items": items,
             "reason": reason,

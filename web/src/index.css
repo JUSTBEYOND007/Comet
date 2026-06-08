@@ -1540,9 +1540,9 @@ body {
     max-width: 100%;
   }
 
-  /* 对话页：会话列表收进抽屉，对话区占满全屏 */
+  /* 对话页：会话列表收进抽屉，对话区占满全屏（保留圆角更有质感） */
   .chat-main {
-    border-radius: 0;
+    border-radius: 14px;
     min-height: 100%;
   }
 
@@ -1581,20 +1581,28 @@ body {
     margin-top: 0;
     width: 100%;
   }
-  /* 分段切换器横向铺满 + 可横向滚动，标签居中不溢出 */
+  /* 分段切换器铺满整宽，四个标签等分，紧凑显示不溢出 */
   .memory-tabs.ant-segmented {
     width: 100%;
-    overflow-x: auto;
-    display: flex;
-    justify-content: center;
+    overflow: hidden;
   }
   .memory-tabs.ant-segmented .ant-segmented-group {
     width: 100%;
-    justify-content: center;
   }
   .memory-tabs.ant-segmented .ant-segmented-item {
-    flex: 1;
-    min-width: max-content;
+    flex: 1 1 0;
+    min-width: 0;
+  }
+  /* 手机端收紧标签内边距与字号，去掉图标右边距，保证一屏放下 */
+  .memory-tabs.ant-segmented .ant-segmented-item-label {
+    padding: 0 2px;
+    font-size: 12px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .memory-tabs.ant-segmented .ant-segmented-item-label .anticon {
+    margin-inline-end: 2px;
   }
 }
 
@@ -1653,9 +1661,16 @@ body {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding: 4px 8px;
-  border-bottom: 1px solid #f0f0f0;
+  gap: 8px;
+  margin: 10px 10px 0;
+  padding: 6px 8px;
+  background: #f7f9fc;
+  border: 1px solid #eef0f4;
+  border-radius: 12px;
   flex-shrink: 0;
+}
+.chat-mobile-bar .ant-btn {
+  border-radius: 10px;
 }
 
 
@@ -2225,11 +2240,52 @@ body {
   }
   .persona-gallery {
     grid-template-columns: 1fr;
-    gap: 14px;
+    gap: 12px;
   }
   .persona-ghost-card {
-    min-height: 120px;
+    min-height: 84px;
     flex-direction: row;
+    border-radius: 14px;
+  }
+  /* 手机端角色卡：横向紧凑布局（左头像 + 右信息），不再大封面占满宽 */
+  .persona-card {
+    flex-direction: row;
+    align-items: stretch;
+    border-radius: 14px;
+  }
+  .persona-cover {
+    height: auto;
+    width: 92px;
+    flex-shrink: 0;
+    border-bottom: none;
+    border-right: 1px solid #f2f4f8;
+    padding: 12px 0;
+  }
+  .persona-avatar {
+    width: 54px;
+    height: 54px;
+  }
+  .persona-cover-glow {
+    width: 76px;
+    height: 76px;
+  }
+  .persona-body {
+    padding: 12px 14px 0;
+  }
+  .persona-name,
+  .persona-meta {
+    text-align: left;
+  }
+  .persona-desc {
+    min-height: 0;
+    margin-top: 6px;
+  }
+  .persona-badge {
+    top: 8px;
+    right: 8px;
+  }
+  .persona-actions {
+    padding: 8px 14px 12px;
   }
   .persona-edit-grid {
     flex-direction: column;

@@ -136,6 +136,8 @@ export default function MusicPlayer() {
 
   const audioSrc = useAuthedSrc(track?.url)
   const coverSrc = useAuthedSrc(track?.coverUrl)
+  // 防止 ended / error / 末尾兜底重复触发切歌
+  const advancedRef = useRef(false)
   const lines = useMemo(() => parseLrc(track?.lyric), [track?.lyric])
   const activeIdx = activeLineIndex(lines, current)
   const resolving = useMusicStore((s) => s.resolving)
@@ -152,7 +154,16 @@ export default function MusicPlayer() {
   useEffect(() => {
     setCurrent(0)
     setDuration(0)
+    advancedRef.current = false
   }, [track?.id, track?.url])
+
+  // 自动播放下一首（带防抖：ended / error / 末尾兜底只触发一次）
+  const advanceNext = () => {
+    if (advancedRef.current) return
+    advancedRef.current = true
+    if (canSwitch) next()
+    else setPlaying(false)
+  }
 
   // 播放/暂停状态同步到 audio 元素
   useEffect(() => {
@@ -249,10 +260,25 @@ export default function MusicPlayer() {
         <audio
           ref={audioRef}
           src={audioSrc}
-          onTimeUpdate={(e) => setCurrent(e.currentTarget.currentTime)}
+          onTimeUpdate={(e) => {
+            const a = e.currentTarget
+            setCurrent(a.currentTime)
+            // 兜底：部分音源（咪咕试听）ended 事件不触发，接近末尾时主动切歌
+            if (
+              a.duration &&
+              Number.isFinite(a.duration) &&
+              a.duration - a.currentTime < 0.4
+            ) {
+              advanceNext()
+            }
+          }}
           onLoadedMetadata={(e) => setDuration(e.currentTarget.duration)}
-          onEnded={() => (canSwitch ? next() : setPlaying(false))}
-          onError={() => setPlaying(false)}
+          onEnded={advanceNext}
+          onError={() => {
+            // 音源加载/播放失败：能切则跳下一首，否则停
+            if (canSwitch) advanceNext()
+            else setPlaying(false)
+          }}
         />
       )}
 
@@ -338,7 +364,7 @@ export default function MusicPlayer() {
               {disc}
             </div>
 
-            {recommendReason && (
+            {(track?.reason || recommendReason) && (
               <div
                 style={{
                   textAlign: 'center',
@@ -347,7 +373,7 @@ export default function MusicPlayer() {
                   marginBottom: 8,
                 }}
               >
-                {recommendReason}
+                {track?.reason || recommendReason}
               </div>
             )}
 

@@ -32,6 +32,8 @@ class AgentConfig(Base):
     enable_knowledge: Mapped[bool] = mapped_column(Boolean, default=True)
     enable_memory: Mapped[bool] = mapped_column(Boolean, default=True)
     enable_web_search: Mapped[bool] = mapped_column(Boolean, default=False)
+    # 对话界面是否显示头像（开 → AI 人格头像 + 用户头像；关 → 两边都不显示）
+    show_avatar: Mapped[bool] = mapped_column(Boolean, default=False)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now()
     )

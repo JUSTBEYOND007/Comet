@@ -35,9 +35,12 @@ import {
 import { favoriteApi } from '@/api/favorites'
 import { AuthenticatedImage } from '@/components/AuthenticatedImage'
 import MessageItem from './chat/MessageItem'
-import type { UiMessage } from './chat/types'
+import type { ChatAvatars, UiMessage } from './chat/types'
 import { groupConversationsByDate } from './chat/groupByDate'
 import { useMusicStore } from '@/stores/musicStore'
+import { personaApi } from '@/api/personas'
+import { agentConfigApi } from '@/api/agentConfig'
+import { authApi } from '@/api/auth'
 
 export default function ChatPage() {
   const [params, setParams] = useSearchParams()
@@ -56,6 +59,8 @@ export default function ChatPage() {
   const [dragOver, setDragOver] = useState(false)
   const dragCounter = useRef(0)
   const [highlightId, setHighlightId] = useState<string | null>(null)
+  // 对话头像上下文（角色头像 + 用户头像 + 总开关）
+  const [avatars, setAvatars] = useState<ChatAvatars>({ show: false })
   // 移动端：会话列表收进抽屉，对话区占满
   const [isMobile, setIsMobile] = useState(
     () => typeof window !== 'undefined' && window.innerWidth <= 768,
@@ -106,6 +111,30 @@ export default function ChatPage() {
 
   useEffect(() => {
     loadConversations()
+  }, [])
+
+  // 加载对话头像上下文：当前角色头像 + 用户头像 + 显示开关
+  const loadAvatars = async () => {
+    try {
+      const [pResp, cResp, meResp] = await Promise.all([
+        personaApi.list(),
+        agentConfigApi.get(),
+        authApi.me(),
+      ])
+      const active = pResp.data.find((p) => p.is_active)
+      setAvatars({
+        show: cResp.data.show_avatar,
+        personaName: active?.name,
+        personaAvatarUrl: active?.avatar_url ?? null,
+        userAvatarUrl: meResp.data.avatar ?? null,
+      })
+    } catch {
+      // 头像信息拉取失败不影响对话
+    }
+  }
+
+  useEffect(() => {
+    loadAvatars()
   }, [])
 
   // 读取联网搜索工具的默认启停（来自「工具配置」），作为对话联网开关默认值
@@ -591,7 +620,7 @@ export default function ChatPage() {
                     background: highlightId === m.id ? '#FFF7E6' : 'transparent',
                   }}
                 >
-                  <MessageItem msg={m} onRegenerate={onRegenerate} />
+                  <MessageItem msg={m} onRegenerate={onRegenerate} avatars={avatars} />
                 </div>
               ))}
             </div>
@@ -711,6 +740,7 @@ export default function ChatPage() {
                     icon={<SendOutlined />}
                     loading={sending}
                     onClick={onSend}
+                    className="chat-send-btn"
                   >
                     发送
                   </Button>

@@ -30,6 +30,7 @@ from app.models.conversation_model import (
     Message,
 )
 from app.repositories.agent_config_repository import AgentConfigRepository
+from app.repositories.agent_persona_repository import AgentPersonaRepository
 from app.repositories.conversation_repository import (
     ConversationRepository,
     MessageRepository,
@@ -71,6 +72,7 @@ class ChatService:
         self.conv_repo = ConversationRepository(session)
         self.msg_repo = MessageRepository(session)
         self.agent_repo = AgentConfigRepository(session)
+        self.persona_repo = AgentPersonaRepository(session)
 
     async def _ensure_conversation(
         self, user_id: uuid.UUID, body: ChatStreamRequest
@@ -152,11 +154,13 @@ class ChatService:
 
         try:
             agent = await self.agent_repo.get_by_user(user_id)
-            temperature = agent.temperature if agent else 0.7
+            # 当前生效的人格（角色卡）：提供 system_prompt 与 temperature
+            persona = await self.persona_repo.get_active(user_id)
+            temperature = persona.temperature if persona else 0.7
             model, config = await build_default_chat_model(
                 self.session, user_id, temperature=temperature, streaming=True
             )
-            system_prompt = (agent.system_prompt.strip() if agent else "") or ""
+            system_prompt = (persona.system_prompt.strip() if persona else "") or ""
             citations: list[dict] = []
             tools = await self._build_tools(user_id, agent, body, citations)
             history = await self._history_messages(conv.id)

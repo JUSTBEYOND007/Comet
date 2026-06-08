@@ -16,15 +16,17 @@ import { favoriteApi } from '@/api/favorites'
 import { chatApi } from '@/api/chat'
 import { copyText } from '@/utils/clipboard'
 import { AuthenticatedImage } from '@/components/AuthenticatedImage'
-import type { UiMessage } from './types'
+import type { ChatAvatars, UiMessage } from './types'
 import { formatMsgTime, resolveToolMeta } from './types'
 
 export default function MessageItem({
   msg,
   onRegenerate,
+  avatars,
 }: {
   msg: UiMessage
   onRegenerate?: (msg: UiMessage) => void
+  avatars?: ChatAvatars
 }) {
   const isUser = msg.role === 'user'
   // 本地收藏态：null 未收藏；string 已收藏（存 favorite id 供取消）
@@ -78,15 +80,39 @@ export default function MessageItem({
     }
   }
 
+  // 头像渲染：开关开 + 对应侧有头像才显示
+  const showAvatars = !!avatars?.show
+  const aiAvatarUrl = avatars?.personaAvatarUrl || null
+  const userAvatarUrl = avatars?.userAvatarUrl || null
+  const sideAvatarUrl = isUser ? userAvatarUrl : aiAvatarUrl
+  // 该侧有头像才渲染头像列；无头像则气泡占满（不占位、不强制圆形）
+  const renderAvatar = () => {
+    if (!showAvatars || !sideAvatarUrl) return null
+    return (
+      <div className="chat-avatar">
+        <AuthenticatedImage
+          src={sideAvatarUrl}
+          alt=""
+          style={{ width: '100%', height: '100%', objectFit: 'cover' }}
+        />
+      </div>
+    )
+  }
+  const hasAvatar = showAvatars && !!sideAvatarUrl
+
   return (
     <div
       style={{
         display: 'flex',
-        justifyContent: isUser ? 'flex-end' : 'flex-start',
+        flexDirection: isUser ? 'row-reverse' : 'row',
+        justifyContent: 'flex-start',
+        alignItems: 'flex-start',
+        gap: hasAvatar ? 10 : 0,
         marginBottom: 24,
       }}
     >
-      <div style={{ maxWidth: '82%' }}>
+      {renderAvatar()}
+      <div style={{ maxWidth: '82%', minWidth: 0 }}>
         {/* 工具调用标记（AI 消息） */}
         {!isUser && msg.toolCalls && msg.toolCalls.length > 0 && (
           <Space size={[4, 4]} wrap style={{ marginBottom: 8 }}>
@@ -105,10 +131,16 @@ export default function MessageItem({
 
         <div
           style={{
-            background: isUser ? '#155EEF' : '#F7F8FA',
+            background: isUser
+              ? 'linear-gradient(135deg, #1d6bff 0%, #2f7bff 100%)'
+              : '#fff',
             color: isUser ? '#fff' : '#1D2129',
             padding: isUser ? '12px 16px' : '14px 18px',
-            borderRadius: 14,
+            borderRadius: isUser ? '16px 16px 4px 16px' : '4px 16px 16px 16px',
+            border: isUser ? 'none' : '1px solid #eef0f4',
+            boxShadow: isUser
+              ? '0 6px 18px -6px rgba(21, 94, 239, 0.45)'
+              : '0 4px 16px -10px rgba(16, 24, 40, 0.2)',
             fontSize: 16,
             lineHeight: 1.75,
           }}

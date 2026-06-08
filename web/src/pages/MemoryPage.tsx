@@ -44,8 +44,10 @@ export default function MemoryPage() {
     <div className="fluid-page">
       <Card
         title="记忆"
+        className="memory-card"
         extra={
           <Segmented
+            className="memory-tabs"
             value={mode}
             onChange={(v) => setMode(v as 'profile' | 'community' | 'timeline' | 'search')}
             options={[

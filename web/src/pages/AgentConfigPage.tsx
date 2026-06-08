@@ -1,24 +1,28 @@
 import { useEffect, useState } from 'react'
-import { Button, Card, Form, Input, Modal, Slider, Space, Typography, message } from 'antd'
-import { ThunderboltOutlined } from '@ant-design/icons'
-import { agentConfigApi, type AgentConfig } from '@/api/agentConfig'
-
-const { Paragraph } = Typography
+import { Spin, Switch, Tooltip, message } from 'antd'
+import { PlusOutlined, QuestionCircleOutlined } from '@ant-design/icons'
+import { agentConfigApi } from '@/api/agentConfig'
+import { personaApi, type Persona } from '@/api/personas'
+import PersonaCard from './agent/PersonaCard'
+import PersonaEditModal from './agent/PersonaEditModal'
 
 export default function AgentConfigPage() {
-  const [form] = Form.useForm<AgentConfig>()
-  const [loading, setLoading] = useState(false)
-  const [saving, setSaving] = useState(false)
-  // 提示词优化
-  const [optimizing, setOptimizing] = useState(false)
-  const [optimizeOpen, setOptimizeOpen] = useState(false)
-  const [optimized, setOptimized] = useState('')
+  const [personas, setPersonas] = useState<Persona[]>([])
+  const [loading, setLoading] = useState(true)
+  const [showAvatar, setShowAvatar] = useState(false)
+  const [activatingId, setActivatingId] = useState<string | null>(null)
+  const [editOpen, setEditOpen] = useState(false)
+  const [editing, setEditing] = useState<Persona | null>(null)
 
   const load = async () => {
     setLoading(true)
     try {
-      const { data } = await agentConfigApi.get()
-      form.setFieldsValue(data)
+      const [pResp, cResp] = await Promise.all([
+        personaApi.list(),
+        agentConfigApi.get(),
+      ])
+      setPersonas(pResp.data)
+      setShowAvatar(cResp.data.show_avatar)
     } catch (e) {
       message.error((e as Error).message)
     } finally {
@@ -31,109 +35,104 @@ export default function AgentConfigPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
-  const onSave = async () => {
-    const values = await form.validateFields()
-    setSaving(true)
+  const onToggleAvatar = async (v: boolean) => {
+    setShowAvatar(v)
     try {
-      await agentConfigApi.update(values)
-      message.success('已保存')
+      await agentConfigApi.update({ show_avatar: v })
     } catch (e) {
+      setShowAvatar(!v)
       message.error((e as Error).message)
-    } finally {
-      setSaving(false)
     }
   }
 
-  const onOptimize = async () => {
-    const raw = (form.getFieldValue('system_prompt') || '').trim()
-    if (!raw) {
-      message.warning('请先填写提示词')
-      return
-    }
-    setOptimizing(true)
+  const onActivate = async (p: Persona) => {
+    setActivatingId(p.id)
     try {
-      const { data } = await agentConfigApi.optimizePrompt(raw)
-      setOptimized(data.optimized)
-      setOptimizeOpen(true)
+      await personaApi.activate(p.id)
+      setPersonas((prev) =>
+        prev.map((x) => ({ ...x, is_active: x.id === p.id })),
+      )
+      message.success(`已切换到「${p.name}」`)
     } catch (e) {
       message.error((e as Error).message)
     } finally {
-      setOptimizing(false)
+      setActivatingId(null)
     }
   }
 
-  const onAdopt = () => {
-    form.setFieldsValue({ system_prompt: optimized })
-    setOptimizeOpen(false)
-    message.success('已采纳，记得点保存')
+  const onDelete = async (p: Persona) => {
+    try {
+      await personaApi.remove(p.id)
+      message.success('已删除')
+      load()
+    } catch (e) {
+      message.error((e as Error).message)
+    }
+  }
+
+  const onCreate = () => {
+    setEditing(null)
+    setEditOpen(true)
+  }
+  const onEdit = (p: Persona) => {
+    setEditing(p)
+    setEditOpen(true)
   }
 
   return (
-    <div className="fluid-narrow">
-      <Card title="Agent 配置" loading={loading}>
-        <Form form={form} layout="vertical">
-          <Form.Item
-            label={
-              <Space>
-                <span>系统提示词（人设 / 风格）</span>
-                <Button
-                  size="small"
-                  type="link"
-                  icon={<ThunderboltOutlined />}
-                  loading={optimizing}
-                  onClick={onOptimize}
-                  style={{ padding: 0 }}
-                >
-                  优化
-                </Button>
-              </Space>
-            }
-            name="system_prompt"
-            extra="给 AI 设定固定的人设、语气或回答风格，每次对话都会注入。点「优化」可让 AI 帮你润色"
-          >
-            <Input.TextArea
-              autoSize={{ minRows: 4, maxRows: 10 }}
-              placeholder="例如：你是一个简洁、专业的技术助手，回答尽量给出可运行的代码示例。"
+    <div className="fluid-page persona-page">
+      {/* Hero 条 */}
+      <div className="persona-hero">
+        <div className="persona-hero-bg" />
+        <div className="persona-hero-content">
+          <div>
+            <div className="persona-hero-title">我的角色</div>
+            <div className="persona-hero-sub">为对话选择一个灵魂，让 AI 化身你想聊的人</div>
+          </div>
+          <div className="persona-hero-switch">
+            <span>
+              显示对话头像
+              <Tooltip title="开启后，对话界面会显示当前角色头像与你的头像；关闭则两边都不显示">
+                <QuestionCircleOutlined style={{ marginLeft: 6, opacity: 0.7 }} />
+              </Tooltip>
+            </span>
+            <Switch checked={showAvatar} onChange={onToggleAvatar} />
+          </div>
+        </div>
+      </div>
+
+      {loading ? (
+        <div style={{ textAlign: 'center', padding: 60 }}>
+          <Spin />
+        </div>
+      ) : (
+        <div className="persona-gallery">
+          {/* 新建卡 */}
+          <button className="persona-ghost-card" onClick={onCreate}>
+            <PlusOutlined className="persona-ghost-plus" />
+            <span>新建角色</span>
+          </button>
+
+          {personas.map((p, i) => (
+            <PersonaCard
+              key={p.id}
+              persona={p}
+              index={i}
+              activating={activatingId === p.id}
+              onActivate={onActivate}
+              onEdit={onEdit}
+              onDelete={onDelete}
             />
-          </Form.Item>
+          ))}
+        </div>
+      )}
 
-          <Form.Item label="温度（创造性）" name="temperature">
-            <Slider min={0} max={2} step={0.1} marks={{ 0: '严谨', 1: '平衡', 2: '发散' }} />
-          </Form.Item>
-
-          <Typography.Paragraph type="secondary" style={{ fontSize: 13, marginTop: 4 }}>
-            想开关知识库 / 记忆 / 联网等工具，请到「工具配置」页统一管理。
-          </Typography.Paragraph>
-
-          <Button type="primary" loading={saving} onClick={onSave}>
-            保存
-          </Button>
-        </Form>
-      </Card>
-
-      <Modal
-        title="优化后的提示词"
-        open={optimizeOpen}
-        onCancel={() => setOptimizeOpen(false)}
-        footer={[
-          <Button key="cancel" onClick={() => setOptimizeOpen(false)}>
-            放弃
-          </Button>,
-          <Button key="adopt" type="primary" onClick={onAdopt}>
-            采纳
-          </Button>,
-        ]}
-        width={680}
-      >
-        <Paragraph type="secondary" style={{ fontSize: 13 }}>
-          采纳后会填入提示词输入框，需再点「保存」才会生效。
-        </Paragraph>
-        <Input.TextArea
-          value={optimized}
-          onChange={(e) => setOptimized(e.target.value)}
-          autoSize={{ minRows: 6, maxRows: 16 }}
-        />
-      </Modal>
+      <PersonaEditModal
+        open={editOpen}
+        persona={editing}
+        onClose={() => setEditOpen(false)}
+        onSaved={load}
+      />
     </div>
   )
 }

@@ -7,6 +7,7 @@ from fastapi import APIRouter
 
 from app.controllers import (
     agent_config_controller,
+    agent_persona_controller,
     auth_controller,
     chat_controller,
     dashboard_controller,
@@ -36,6 +37,7 @@ api_router.include_router(file_controller.router)
 api_router.include_router(memory_controller.router)
 api_router.include_router(chat_controller.router)
 api_router.include_router(agent_config_controller.router)
+api_router.include_router(agent_persona_controller.router)
 api_router.include_router(mcp_controller.router)
 api_router.include_router(tool_controller.router)
 api_router.include_router(search_controller.router)

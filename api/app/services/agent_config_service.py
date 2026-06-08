@@ -40,6 +40,8 @@ class AgentConfigService:
             config.enable_memory = body.enable_memory
         if body.enable_web_search is not None:
             config.enable_web_search = body.enable_web_search
+        if body.show_avatar is not None:
+            config.show_avatar = body.show_avatar
         return await self.repo.save(config)
 
     async def optimize_prompt(self, user_id: uuid.UUID, raw_prompt: str) -> str:
@@ -85,4 +87,5 @@ class AgentConfigService:
             "enable_knowledge": config.enable_knowledge,
             "enable_memory": config.enable_memory,
             "enable_web_search": config.enable_web_search,
+            "show_avatar": config.show_avatar,
         }

@@ -16,6 +16,14 @@ export interface UiMessage {
   createdAt?: string // 消息时间（ISO 字符串）
 }
 
+// 对话头像上下文：是否显示 + AI（当前角色）头像 + 用户头像
+export interface ChatAvatars {
+  show: boolean
+  personaName?: string
+  personaAvatarUrl?: string | null // AI 头像（当前角色）；空则 AI 侧不显示
+  userAvatarUrl?: string | null // 用户头像；空则用户侧不显示
+}
+
 // 格式化消息时间：今天显示 HH:mm，否则显示 月-日 HH:mm
 export function formatMsgTime(iso?: string): string {
   if (!iso) return ''

@@ -4,6 +4,7 @@
 避免在 Celery worker 等场景因模型未全部加载导致外键解析失败。
 """
 from app.models.agent_config_model import AgentConfig
+from app.models.agent_persona_model import AgentPersona
 from app.models.conversation_model import Conversation, Message
 from app.models.daily_review_model import DailyReview
 from app.models.document_model import Document
@@ -22,6 +23,7 @@ from app.models.user_model import User
 
 __all__ = [
     "AgentConfig",
+    "AgentPersona",
     "Conversation",
     "Message",
     "DailyReview",

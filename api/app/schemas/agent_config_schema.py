@@ -10,6 +10,7 @@ class AgentConfigUpdate(BaseModel):
     enable_knowledge: bool | None = None
     enable_memory: bool | None = None
     enable_web_search: bool | None = None
+    show_avatar: bool | None = None
 
 
 class OptimizePromptRequest(BaseModel):

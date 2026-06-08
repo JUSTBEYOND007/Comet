@@ -12,6 +12,7 @@ export interface AgentConfig {
   enable_knowledge: boolean
   enable_memory: boolean
   enable_web_search: boolean
+  show_avatar: boolean
 }
 
 export const agentConfigApi = {

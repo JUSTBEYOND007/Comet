@@ -1318,6 +1318,16 @@ body {
   border-color: #adc6ff;
   box-shadow: 0 8px 26px -8px rgba(21, 94, 239, 0.22);
 }
+/* 对话消息滚动区：隐藏滚动条（保留滚动功能） */
+.chat-scroll {
+  scrollbar-width: none; /* Firefox */
+  -ms-overflow-style: none; /* IE/Edge */
+}
+.chat-scroll::-webkit-scrollbar {
+  width: 0;
+  height: 0;
+  display: none; /* Chrome/Safari */
+}
 .chat-send-btn {
   background: linear-gradient(135deg, #155eef 0%, #4e8cff 100%) !important;
   border: none !important;
@@ -1534,6 +1544,23 @@ body {
 
 /* ───────────────── 移动端适配（≤768px）───────────────── */
 @media (max-width: 768px) {
+  /* 手机端全局隐藏滚动条（保留滚动功能） */
+  * {
+    scrollbar-width: none !important; /* Firefox */
+    -ms-overflow-style: none !important; /* IE/Edge */
+  }
+  *::-webkit-scrollbar {
+    width: 0 !important;
+    height: 0 !important;
+    display: none !important; /* Chrome/Safari */
+  }
+
+  /* 顶栏整体压低，给内容更多空间 */
+  .ant-layout-header {
+    height: 52px !important;
+    line-height: 52px !important;
+  }
+
   /* 内容容器在手机上吃满宽度 */
   .fluid-page,
   .fluid-narrow {

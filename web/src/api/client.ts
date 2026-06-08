@@ -1,9 +1,11 @@
 import axios from 'axios'
 
 // 统一请求封装：baseURL=/api，返回体 { code, message, data }
+// timeout 给到 5 分钟：上传大文件 + 转存 OSS 在低带宽下耗时长，避免前端过早 timeout。
+// 普通接口正常都是秒级返回，不受影响。
 const client = axios.create({
   baseURL: '/api',
-  timeout: 30000,
+  timeout: 300000,
 })
 
 // 请求拦截：附带 token（账号体系阶段启用）

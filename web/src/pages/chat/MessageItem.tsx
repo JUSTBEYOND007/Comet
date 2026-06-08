@@ -14,6 +14,7 @@ import {
 import MarkdownMessage from '@/components/MarkdownMessage'
 import { favoriteApi } from '@/api/favorites'
 import { chatApi } from '@/api/chat'
+import { copyText } from '@/utils/clipboard'
 import { AuthenticatedImage } from '@/components/AuthenticatedImage'
 import type { UiMessage } from './types'
 import { formatMsgTime, resolveToolMeta } from './types'
@@ -33,12 +34,9 @@ export default function MessageItem({
   const [feedback, setFeedback] = useState<'up' | 'down' | null>(msg.feedback ?? null)
 
   const onCopy = async () => {
-    try {
-      await navigator.clipboard.writeText(msg.content)
-      antdMessage.success('已复制')
-    } catch {
-      antdMessage.error('复制失败')
-    }
+    const ok = await copyText(msg.content)
+    if (ok) antdMessage.success('已复制')
+    else antdMessage.error('复制失败')
   }
 
   const onFeedback = async (rating: 'up' | 'down') => {

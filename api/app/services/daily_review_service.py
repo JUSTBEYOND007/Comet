@@ -105,7 +105,7 @@ class DailyReviewService:
         try:
             from app.services.emotion_service import EmotionService
 
-            data = await EmotionService(self.session).trend(1)
+            data = await EmotionService(self.session).trend(user_id, 1)
             points = data.get("points", [])
             if not points:
                 return ""

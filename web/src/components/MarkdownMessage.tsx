@@ -3,6 +3,7 @@ import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
 import { message as antdMessage } from 'antd'
 import { CheckOutlined, CopyOutlined } from '@ant-design/icons'
+import { copyText } from '@/utils/clipboard'
 
 // 从 React children 里递归抽出纯文本（供复制代码用）
 function extractText(node: ReactNode): string {
@@ -23,12 +24,12 @@ function CodeBlock({ className, children }: { className?: string; children: Reac
   const lang = (className || '').replace('language-', '').trim()
 
   const onCopy = async () => {
-    try {
-      await navigator.clipboard.writeText(code)
+    const ok = await copyText(code)
+    if (ok) {
       setCopied(true)
       antdMessage.success('已复制代码')
       setTimeout(() => setCopied(false), 1500)
-    } catch {
+    } else {
       antdMessage.error('复制失败')
     }
   }

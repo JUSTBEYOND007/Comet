@@ -584,7 +584,7 @@ export default function ChatPage() {
             </div>
           </div>
         )}
-        <div ref={scrollRef} style={{ flex: 1, overflowY: 'auto', padding: '28px 0' }}>
+        <div ref={scrollRef} className="chat-scroll" style={{ flex: 1, overflowY: 'auto', padding: '28px 0' }}>
           {messages.length === 0 ? (
             <div className="chat-empty">
               <div className="chat-empty-orb">💬</div>

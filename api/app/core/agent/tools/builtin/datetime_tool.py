@@ -1,5 +1,5 @@
-"""时间工具：返回当前日期时间（零外部依赖，验证工具系统的示例内置工具）。"""
-from datetime import datetime
+"""时间工具：返回当前日期时间（北京时间 UTC+8，零外部依赖）。"""
+from datetime import datetime, timedelta, timezone
 
 from langchain_core.tools import StructuredTool
 from pydantic import BaseModel, Field
@@ -9,6 +9,8 @@ from app.core.agent.tools.base import ToolBuildContext, ToolSpec, register_tool
 KEY = "datetime"
 
 _WEEKDAYS = ["星期一", "星期二", "星期三", "星期四", "星期五", "星期六", "星期日"]
+# 北京时间（东八区），显式固定时区，不依赖服务器/容器本地时区
+_CST = timezone(timedelta(hours=8))
 
 
 class _EmptyInput(BaseModel):
@@ -17,9 +19,9 @@ class _EmptyInput(BaseModel):
 
 async def _build(_ctx: ToolBuildContext) -> StructuredTool:
     async def _run(query: str = "") -> str:
-        now = datetime.now()
+        now = datetime.now(_CST)
         weekday = _WEEKDAYS[now.weekday()]
-        return f"当前时间：{now.strftime('%Y-%m-%d %H:%M:%S')}（{weekday}）"
+        return f"当前时间：{now.strftime('%Y-%m-%d %H:%M:%S')}（{weekday}，北京时间）"
 
     return StructuredTool.from_function(
         coroutine=_run,

@@ -98,6 +98,14 @@ class Settings(BaseSettings):
     consolidate_min_age_hours: int = 24  # 凭提及次数提升需存在满 N 小时
     consolidate_profile_top_k: int = 5  # 每次巩固对 top-K 高频实体做画像增强
 
+    # 反思引擎（归纳高层洞察 Insight）
+    reflection_top_k: int = 25  # 反思输入：top-N 高重要度/高频实体
+    reflection_stmt_per_entity: int = 4  # 每个实体取几条代表性陈述
+    reflection_min_insights: int = 3  # 期望产出洞察下限
+    reflection_max_insights: int = 6  # 期望产出洞察上限
+    reflection_min_entities: int = 5  # 实体少于此数不反思（信息太少）
+    reflection_trigger_threshold: int = 20  # 增量触发：累计新增记忆达标触发一次反思
+
     @property
     def database_url(self) -> str:
         return (

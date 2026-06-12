@@ -47,9 +47,9 @@ BUILTIN_SKILLS: list[dict] = [
         "tool_keys": [],
         "config": {
             "quick_prompts": [
-                "帮我审查这段代码有没有 bug",
-                "这段代码有哪些可以优化的地方？",
-                "有没有安全或性能隐患？",
+                "帮我审查这段代码：",
+                "看看这段代码有哪些可以优化的地方：",
+                "排查下这段代码的安全或性能隐患：",
             ],
             "few_shots": [],
         },
@@ -68,8 +68,8 @@ BUILTIN_SKILLS: list[dict] = [
         "tool_keys": [],
         "config": {
             "quick_prompts": [
-                "把以下会议记录整理成纪要",
-                "提炼出这次会议的待办事项和负责人",
+                "把以下会议记录整理成纪要：",
+                "提炼出这次会议的待办事项和负责人：",
             ],
             "few_shots": [],
         },
@@ -89,8 +89,8 @@ BUILTIN_SKILLS: list[dict] = [
         "tool_keys": [],
         "config": {
             "quick_prompts": [
-                "把这段中文翻译成地道英文",
-                "帮我润色这段英文，让它更自然",
+                "把这段中文翻译成地道英文：",
+                "帮我润色这段英文，让它更自然：",
             ],
             "few_shots": [],
         },

@@ -23,11 +23,13 @@ import {
   SearchOutlined,
   StarFilled,
   StarOutlined,
+  ThunderboltOutlined,
 } from '@ant-design/icons'
 import {
   memoryApi,
   type Community,
   type CommunityMember,
+  type Insight,
   type MemoryHit,
   type MemoryProfile,
   type ProfileEntity,
@@ -200,6 +202,9 @@ function ProfilePanel() {
 
   return (
     <Space direction="vertical" size="large" style={{ width: '100%' }}>
+      {/* AI 眼中的你（反思引擎归纳的高层理解） */}
+      <InsightsBanner />
+
       {/* 主动记住 */}
       <Space.Compact style={{ width: '100%' }}>
         <Input
@@ -338,6 +343,102 @@ function ProfilePanel() {
         </>
       )}
     </Space>
+  )
+}
+
+// ── AI 眼中的你：反思引擎归纳的高层理解 ──
+function InsightsBanner() {
+  const [insights, setInsights] = useState<Insight[]>([])
+  const [loading, setLoading] = useState(true)
+  const [reflecting, setReflecting] = useState(false)
+
+  const load = async () => {
+    try {
+      const { data } = await memoryApi.insights()
+      setInsights(data)
+    } catch {
+      // 洞察加载失败不影响画像
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  useEffect(() => {
+    load()
+  }, [])
+
+  const onReflect = async () => {
+    setReflecting(true)
+    try {
+      const { data } = await memoryApi.reflect()
+      if (data.insights > 0) {
+        message.success(`已更新对你的理解，共 ${data.insights} 条`)
+      } else {
+        message.info('记忆还不够多，再多聊聊我就更懂你了')
+      }
+      load()
+    } catch (e) {
+      message.error((e as Error).message)
+    } finally {
+      setReflecting(false)
+    }
+  }
+
+  const onDelete = async (id: string) => {
+    try {
+      await memoryApi.deleteInsight(id)
+      setInsights((prev) => prev.filter((x) => x.id !== id))
+    } catch (e) {
+      message.error((e as Error).message)
+    }
+  }
+
+  // 加载中或空且未在反思：仍展示一个可触发反思的入口
+  return (
+    <div className="insight-banner">
+      <div className="insight-banner-head">
+        <Space size={8}>
+          <BulbOutlined style={{ color: '#fff', fontSize: 18 }} />
+          <span className="insight-banner-title">AI 眼中的你</span>
+        </Space>
+        <Button
+          size="small"
+          ghost
+          icon={<ThunderboltOutlined />}
+          loading={reflecting}
+          onClick={onReflect}
+        >
+          重新认识你
+        </Button>
+      </div>
+
+      {loading ? (
+        <div style={{ padding: 16, textAlign: 'center' }}>
+          <Spin />
+        </div>
+      ) : insights.length === 0 ? (
+        <div className="insight-banner-empty">
+          还不太了解你。随着记忆积累，我会慢慢读懂你是个怎样的人（如「持续精进的技术人」），
+          也可以点「重新认识你」马上生成。
+        </div>
+      ) : (
+        <div className="insight-grid">
+          {insights.map((it) => (
+            <div key={it.id} className="insight-item">
+              <div className="insight-item-head">
+                <Tag color="geekblue" style={{ margin: 0 }}>
+                  {it.theme}
+                </Tag>
+                <Popconfirm title="删除这条洞察？" onConfirm={() => onDelete(it.id)}>
+                  <DeleteOutlined className="insight-del" />
+                </Popconfirm>
+              </div>
+              <div className="insight-content">{it.content}</div>
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
   )
 }
 

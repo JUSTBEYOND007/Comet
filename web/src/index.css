@@ -3180,3 +3180,65 @@ body {
     max-width: 180px;
   }
 }
+
+/* ── 记忆页：AI 对你的洞察 ── */
+.insight-banner {
+  border-radius: 14px;
+  padding: 16px 18px;
+  background: linear-gradient(120deg, #6366f1 0%, #8b5cf6 100%);
+  box-shadow: 0 14px 32px -16px rgba(99, 102, 241, 0.6);
+}
+.insight-banner-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 12px;
+}
+.insight-banner-title {
+  color: #fff;
+  font-size: 16px;
+  font-weight: 700;
+  letter-spacing: 0.5px;
+}
+.insight-banner-empty {
+  color: rgba(255, 255, 255, 0.85);
+  font-size: 13px;
+  line-height: 1.7;
+}
+.insight-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(15rem, 1fr));
+  gap: 10px;
+}
+.insight-item {
+  background: rgba(255, 255, 255, 0.14);
+  border: 1px solid rgba(255, 255, 255, 0.2);
+  border-radius: 10px;
+  padding: 12px 14px;
+  backdrop-filter: blur(6px);
+}
+.insight-item-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 8px;
+}
+.insight-del {
+  color: rgba(255, 255, 255, 0.6);
+  cursor: pointer;
+  font-size: 13px;
+}
+.insight-del:hover {
+  color: #fff;
+}
+.insight-content {
+  color: #fff;
+  font-size: 13.5px;
+  line-height: 1.65;
+}
+
+@media (max-width: 768px) {
+  .insight-grid {
+    grid-template-columns: 1fr;
+  }
+}

@@ -108,6 +108,36 @@ async def consolidate(
     return success(stats, "记忆巩固完成")
 
 
+@router.get("/insights")
+async def list_insights(
+    user: User = Depends(get_current_user),
+    session: AsyncSession = Depends(get_session),
+):
+    """AI 对你的洞察：反思引擎归纳的高层理解。"""
+    return success(await MemoryService(session).list_insights(user.id))
+
+
+@router.post("/reflect")
+async def reflect(
+    user: User = Depends(get_current_user),
+    session: AsyncSession = Depends(get_session),
+):
+    """手动触发反思：归纳高层洞察 Insight。"""
+    stats = await MemoryService(session).reflect(user.id)
+    return success(stats, "反思完成")
+
+
+@router.delete("/insights/{insight_id}")
+async def delete_insight(
+    insight_id: str,
+    user: User = Depends(get_current_user),
+    session: AsyncSession = Depends(get_session),
+):
+    """删除单条洞察。"""
+    await MemoryService(session).delete_insight(user.id, insight_id)
+    return success(message="删除成功")
+
+
 @router.get("/graph")
 async def get_graph(
     user: User = Depends(get_current_user),

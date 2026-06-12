@@ -255,8 +255,32 @@ async def run_extraction(
     except Exception as e:
         logger.warning("增量社区聚类失败（忽略）: %s", e)
 
+    # 12. 反思增量触发：累计新增实体数达阈值则派发一次单用户反思（失败不影响萃取）
+    try:
+        await _maybe_trigger_reflection(user_id, len(stats.entity_ids or []))
+    except Exception as e:
+        logger.warning("反思增量触发失败（忽略）: %s", e)
+
     logger.info("记忆萃取完成: %s", stats.to_dict())
     return stats
+
+
+async def _maybe_trigger_reflection(user_id: str, new_count: int) -> None:
+    """用 Redis 计数器累计新增实体；达到阈值清零并派发单用户反思任务。"""
+    if new_count <= 0:
+        return
+    from app.config import settings
+    from app.db.redis import get_redis
+
+    key = f"reflect:pending:{user_id}"
+    redis = get_redis()
+    total = await redis.incrby(key, new_count)
+    if total >= settings.reflection_trigger_threshold:
+        await redis.set(key, 0)
+        from app.tasks.beat import reflect_user_task
+
+        reflect_user_task.delay(user_id)
+        logger.info("反思增量触发: user=%s 累计新增=%d", user_id, total)
 
 
 async def _persist(

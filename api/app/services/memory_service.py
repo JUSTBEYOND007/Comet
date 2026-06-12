@@ -168,6 +168,48 @@ class MemoryService:
         chat_client = await get_optional_client_for_type(self.session, user_id, "chat")
         return await ConsolidationEngine(chat_client=chat_client).run(str(user_id))
 
+    async def reflect(self, user_id: uuid.UUID) -> dict:
+        """手动触发反思：归纳高层洞察 Insight。"""
+        from app.core.llm.resolver import get_optional_client_for_type
+        from app.core.memory.reflection.reflector import ReflectionEngine
+
+        chat_client = await get_optional_client_for_type(self.session, user_id, "chat")
+        embed_client = await get_optional_client_for_type(
+            self.session, user_id, "embedding"
+        )
+        return await ReflectionEngine(
+            chat_client=chat_client, embed_client=embed_client
+        ).run(str(user_id))
+
+    async def list_insights(self, user_id: uuid.UUID) -> list[dict]:
+        """列出用户的高层洞察（AI 对你的理解）。"""
+        from app.repositories.neo4j.memory_graph_repository import (
+            MemoryGraphRepository,
+        )
+
+        rows = await MemoryGraphRepository().list_insights(str(user_id))
+        return [
+            {
+                "id": r.get("id"),
+                "theme": r.get("theme") or "",
+                "content": r.get("content") or "",
+                "importance": r.get("importance", 0.6),
+                "confidence": r.get("confidence", 0.7),
+                "source_count": r.get("source_count", 0),
+                "created_at": r.get("created_at"),
+                "updated_at": r.get("updated_at"),
+            }
+            for r in rows
+        ]
+
+    async def delete_insight(self, user_id: uuid.UUID, insight_id: str) -> None:
+        """删除单条洞察。"""
+        from app.repositories.neo4j.memory_graph_repository import (
+            MemoryGraphRepository,
+        )
+
+        await MemoryGraphRepository().delete_insight(str(user_id), insight_id)
+
     async def get_graph(self, user_id: uuid.UUID) -> dict:
         """知识图谱全量数据：nodes（实体）+ edges（关系）+ communities。"""
         from app.repositories.neo4j.community_repository import CommunityRepository

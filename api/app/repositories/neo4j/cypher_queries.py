@@ -521,3 +521,91 @@ RETURN ev.id AS id, ev.title AS title, ev.description AS description,
        [p IN parts WHERE p.id IS NOT NULL] AS participants
 ORDER BY coalesce(ev.event_time, ev.created_at) DESC
 """
+
+
+# ── 反思引擎：洞察 Insight 节点 ──
+
+# 取反思输入：top-N 高重要度/高频实体（不限层级），含类型、画像、提及数
+REFLECTION_TOP_ENTITIES = """
+MATCH (e:Entity {user_id: $user_id})
+RETURN e.id AS id, e.name AS name, e.type AS type,
+       coalesce(e.description, '') AS description,
+       coalesce(e.importance, 0.5) AS importance,
+       coalesce(e.mention_count, 1) AS mention_count,
+       coalesce(e.core_facts, []) AS core_facts,
+       coalesce(e.traits, []) AS traits
+ORDER BY importance DESC, mention_count DESC
+LIMIT $top_k
+"""
+
+# 取某实体关联的代表性陈述（按重要度倒序，少量）
+REFLECTION_ENTITY_STATEMENTS = """
+MATCH (s:Statement {user_id: $user_id})-[:MENTIONS]->(e:Entity {user_id: $user_id, id: $entity_id})
+RETURN s.statement AS statement
+ORDER BY coalesce(s.importance, 0.5) DESC
+LIMIT $limit
+"""
+
+# 按 theme 查已有洞察（用于 upsert：同主题更新而非新建）
+INSIGHT_GET_BY_THEME = """
+MATCH (n:Insight {user_id: $user_id, theme: $theme})
+RETURN n.id AS id
+LIMIT 1
+"""
+
+# upsert 洞察：按 id MERGE，写入/更新全部属性
+INSIGHT_UPSERT = """
+MERGE (n:Insight {id: $id})
+ON CREATE SET n.created_at = $now
+SET n.user_id = $user_id, n.theme = $theme, n.content = $content,
+    n.embedding = $embedding, n.importance = $importance,
+    n.confidence = $confidence, n.source_count = $source_count,
+    n.updated_at = $now
+RETURN n.id AS id
+"""
+
+# 重建洞察→实体的 DERIVED_FROM 边（先清旧边再建新边，保持来源最新）
+INSIGHT_CLEAR_DERIVED = """
+MATCH (n:Insight {user_id: $user_id, id: $insight_id})-[r:DERIVED_FROM]->()
+DELETE r
+"""
+
+INSIGHT_LINK_ENTITIES = """
+MATCH (n:Insight {user_id: $user_id, id: $insight_id})
+UNWIND $entity_ids AS eid
+MATCH (e:Entity {user_id: $user_id, id: eid})
+MERGE (n)-[r:DERIVED_FROM]->(e)
+ON CREATE SET r.created_at = $now
+"""
+
+# 列出用户全部洞察（按重要度+更新时间倒序）
+INSIGHT_LIST = """
+MATCH (n:Insight {user_id: $user_id})
+RETURN n.id AS id, n.theme AS theme, n.content AS content,
+       coalesce(n.importance, 0.6) AS importance,
+       coalesce(n.confidence, 0.7) AS confidence,
+       coalesce(n.source_count, 0) AS source_count,
+       n.created_at AS created_at, n.updated_at AS updated_at
+ORDER BY importance DESC, updated_at DESC
+"""
+
+# 洞察总数（控量参考）
+INSIGHT_COUNT = """
+MATCH (n:Insight {user_id: $user_id})
+RETURN count(n) AS cnt
+"""
+
+# 删除单个洞察（连带边）
+INSIGHT_DELETE = """
+MATCH (n:Insight {user_id: $user_id, id: $insight_id})
+DETACH DELETE n
+"""
+
+# 洞察向量召回（供 ③ 主动召回按话题检索）
+INSIGHT_VECTOR_SEARCH = """
+CALL db.index.vector.queryNodes('insight_embedding_index', $top_k, $vector)
+YIELD node, score
+WHERE node.user_id = $user_id
+RETURN node.id AS id, node.theme AS theme, node.content AS content,
+       coalesce(node.importance, 0.6) AS importance, score
+"""

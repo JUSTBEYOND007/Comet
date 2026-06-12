@@ -55,5 +55,9 @@ celery_app.conf.update(
             "task": "app.tasks.beat.consolidate_memory",
             "schedule": crontab(hour=4, minute=0),  # 每天凌晨 4:00 记忆巩固
         },
+        "reflect-memory": {
+            "task": "app.tasks.beat.reflect_memory",
+            "schedule": crontab(hour=4, minute=30),  # 每天凌晨 4:30 反思（巩固之后）
+        },
     },
 )

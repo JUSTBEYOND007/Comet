@@ -11,6 +11,7 @@ from app.core.memory.graph_models import (
     LABEL_DIALOGUE,
     LABEL_ENTITY,
     LABEL_EVENT,
+    LABEL_INSIGHT,
     LABEL_STATEMENT,
 )
 from app.db.neo4j import get_driver
@@ -33,6 +34,8 @@ _CONSTRAINTS = [
     f"FOR (n:{LABEL_EVENT}) REQUIRE n.id IS UNIQUE",
     f"CREATE CONSTRAINT community_id_unique IF NOT EXISTS "
     f"FOR (n:{LABEL_COMMUNITY}) REQUIRE n.id IS UNIQUE",
+    f"CREATE CONSTRAINT insight_id_unique IF NOT EXISTS "
+    f"FOR (n:{LABEL_INSIGHT}) REQUIRE n.id IS UNIQUE",
 ]
 
 # 普通属性索引：按 user_id 过滤是高频操作
@@ -44,6 +47,9 @@ _PROPERTY_INDEXES = [
     # 记忆分层 / 重要度：巩固任务与检索排序的过滤维度
     f"CREATE INDEX entity_layer_idx IF NOT EXISTS FOR (n:{LABEL_ENTITY}) ON (n.memory_layer)",
     f"CREATE INDEX statement_layer_idx IF NOT EXISTS FOR (n:{LABEL_STATEMENT}) ON (n.memory_layer)",
+    # 洞察：按 user_id + theme 检索/收敛
+    f"CREATE INDEX insight_user_idx IF NOT EXISTS FOR (n:{LABEL_INSIGHT}) ON (n.user_id)",
+    f"CREATE INDEX insight_theme_idx IF NOT EXISTS FOR (n:{LABEL_INSIGHT}) ON (n.theme)",
 ]
 
 # 全文索引（cjk 分词，支持中文关键词检索）
@@ -56,6 +62,9 @@ _FULLTEXT_INDEXES = [
     f"OPTIONS {{ indexConfig: {{ `fulltext.analyzer`: 'cjk' }} }}",
     f"CREATE FULLTEXT INDEX event_fulltext IF NOT EXISTS "
     f"FOR (n:{LABEL_EVENT}) ON EACH [n.title, n.description] "
+    f"OPTIONS {{ indexConfig: {{ `fulltext.analyzer`: 'cjk' }} }}",
+    f"CREATE FULLTEXT INDEX insight_fulltext IF NOT EXISTS "
+    f"FOR (n:{LABEL_INSIGHT}) ON EACH [n.content, n.theme] "
     f"OPTIONS {{ indexConfig: {{ `fulltext.analyzer`: 'cjk' }} }}",
 ]
 
@@ -76,6 +85,12 @@ _VECTOR_INDEXES = [
     (
         f"CREATE VECTOR INDEX event_embedding_index IF NOT EXISTS "
         f"FOR (n:{LABEL_EVENT}) ON n.embedding "
+        f"OPTIONS {{ indexConfig: {{ `vector.dimensions`: {VECTOR_DIMS}, "
+        f"`vector.similarity_function`: 'cosine' }} }}"
+    ),
+    (
+        f"CREATE VECTOR INDEX insight_embedding_index IF NOT EXISTS "
+        f"FOR (n:{LABEL_INSIGHT}) ON n.embedding "
         f"OPTIONS {{ indexConfig: {{ `vector.dimensions`: {VECTOR_DIMS}, "
         f"`vector.similarity_function`: 'cosine' }} }}"
     ),

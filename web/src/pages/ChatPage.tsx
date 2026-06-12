@@ -90,6 +90,7 @@ export default function ChatPage() {
   }, [])
   const scrollRef = useRef<HTMLDivElement>(null)
   const msgRefs = useRef<Record<string, HTMLDivElement | null>>({})
+  const inputRef = useRef<{ focus: () => void } | null>(null)
   const groupsInited = useRef(false)
 
   const convGroups = groupConversationsByDate(conversations)
@@ -558,6 +559,13 @@ export default function ChatPage() {
     )
   }
 
+  // 快捷提问/建议词：填进输入框并聚焦（不直接发送），
+  // 因为很多快捷语是「待补全的开头」（如「翻译这段话」），直接发会漏掉正文。
+  const fillInput = (text: string) => {
+    setInput(text)
+    setTimeout(() => inputRef.current?.focus(), 0)
+  }
+
   const SUGGESTIONS = [
     '帮我总结一下知识库里的内容',
     '我最近都聊过些什么？',
@@ -688,7 +696,7 @@ export default function ChatPage() {
                   <button
                     key={s}
                     className="chat-suggestion"
-                    onClick={() => setInput(s)}
+                    onClick={() => fillInput(s)}
                   >
                     {s}
                   </button>
@@ -773,13 +781,14 @@ export default function ChatPage() {
                   <CloseOutlined />
                 </button>
               )}
-              {/* 快捷开场提问 */}
+              {/* 快捷开场提问：填进输入框待补充，不直接发送 */}
               {activeSkill?.config?.quick_prompts?.map((qp, i) => (
                 <button
                   key={i}
                   className="chat-quick-prompt"
                   disabled={sending}
-                  onClick={() => onSend(qp)}
+                  onClick={() => fillInput(qp)}
+                  title="填入输入框，可补充后发送"
                 >
                   {qp}
                 </button>
@@ -878,6 +887,7 @@ export default function ChatPage() {
                     />
                   </Popover>
                   <Input.TextArea
+                    ref={inputRef as never}
                     value={input}
                     onChange={(e) => setInput(e.target.value)}
                     onPressEnter={(e) => {
@@ -904,6 +914,7 @@ export default function ChatPage() {
               ) : (
                 <>
                   <Input.TextArea
+                    ref={inputRef as never}
                     value={input}
                     onChange={(e) => setInput(e.target.value)}
                     onPressEnter={(e) => {

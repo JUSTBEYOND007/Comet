@@ -4,6 +4,7 @@
 与文档/记忆任务一致：任务级独立引擎 + 独立事件循环。
 """
 import asyncio
+import uuid
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
@@ -121,3 +122,78 @@ async def _run_consolidation() -> int:
 def consolidate_memory_task() -> int:
     """记忆巩固的 Celery 任务入口（定时）。"""
     return asyncio.run(_run_consolidation())
+
+
+async def _run_reflection() -> int:
+    """为所有用户跑一次反思（归纳高层洞察 Insight）。"""
+    from app.core.llm.resolver import get_optional_client_for_type
+    from app.core.memory.reflection.reflector import ReflectionEngine
+    from app.db import neo4j
+
+    engine_db = create_task_engine()
+    session_maker = async_sessionmaker(
+        engine_db, expire_on_commit=False, class_=AsyncSession
+    )
+    count = 0
+    try:
+        async with session_maker() as session:
+            result = await session.execute(select(User.id))
+            user_ids = [row[0] for row in result.all()]
+            for uid in user_ids:
+                try:
+                    chat_client = await get_optional_client_for_type(
+                        session, uid, "chat"
+                    )
+                    embed_client = await get_optional_client_for_type(
+                        session, uid, "embedding"
+                    )
+                    engine = ReflectionEngine(
+                        chat_client=chat_client, embed_client=embed_client
+                    )
+                    await engine.run(str(uid))
+                    count += 1
+                except Exception as e:
+                    logger.warning("用户 %s 反思失败: %s", uid, e)
+    finally:
+        await engine_db.dispose()
+        await neo4j.close()
+    logger.info("反思批量完成: %d 个用户", count)
+    return count
+
+
+@celery_app.task(name="app.tasks.beat.reflect_memory")
+def reflect_memory_task() -> int:
+    """反思的 Celery 任务入口（定时）。"""
+    return asyncio.run(_run_reflection())
+
+
+async def _run_reflection_for_user(user_id: str) -> dict:
+    """对单个用户跑一次反思（增量触发用）。"""
+    from app.core.llm.resolver import get_optional_client_for_type
+    from app.core.memory.reflection.reflector import ReflectionEngine
+    from app.db import neo4j
+
+    engine_db = create_task_engine()
+    session_maker = async_sessionmaker(
+        engine_db, expire_on_commit=False, class_=AsyncSession
+    )
+    try:
+        async with session_maker() as session:
+            uid = uuid.UUID(user_id)
+            chat_client = await get_optional_client_for_type(session, uid, "chat")
+            embed_client = await get_optional_client_for_type(
+                session, uid, "embedding"
+            )
+            engine = ReflectionEngine(
+                chat_client=chat_client, embed_client=embed_client
+            )
+            return await engine.run(user_id)
+    finally:
+        await engine_db.dispose()
+        await neo4j.close()
+
+
+@celery_app.task(name="app.tasks.beat.reflect_user")
+def reflect_user_task(user_id: str) -> dict:
+    """单用户反思的 Celery 任务入口（萃取攒够 N 条后增量触发）。"""
+    return asyncio.run(_run_reflection_for_user(user_id))

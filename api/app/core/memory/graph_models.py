@@ -27,6 +27,7 @@ LABEL_STATEMENT = "Statement"
 LABEL_ENTITY = "Entity"
 LABEL_EVENT = "Event"
 LABEL_COMMUNITY = "Community"
+LABEL_INSIGHT = "Insight"
 
 # ── 关系类型 ──
 REL_HAS_CHUNK = "HAS_CHUNK"  # Dialogue → Chunk
@@ -35,6 +36,7 @@ REL_MENTIONS = "MENTIONS"  # Statement → Entity
 REL_RELATION = "RELATION"  # Entity → Entity（三元组）
 REL_INVOLVES = "INVOLVES"  # Event → Entity
 REL_IN_COMMUNITY = "IN_COMMUNITY"  # Entity → Community
+REL_DERIVED_FROM = "DERIVED_FROM"  # Insight → Entity（洞察归纳自哪些实体）
 
 # ── 记忆来源 ──
 SOURCE_AUTO = "auto"  # 对话自动萃取
@@ -174,6 +176,35 @@ class CommunityNode(BaseModel):
     created_at: datetime = Field(default_factory=_now)
 
 
+class InsightNode(BaseModel):
+    """洞察节点：反思引擎对一批记忆归纳出的高层结论（画像级理解）。
+
+    按 theme（主题）收敛：同主题 upsert 更新，不重复堆叠；存 embedding 供按话题召回。
+    """
+
+    model_config = ConfigDict(extra="ignore")
+    id: str = Field(default_factory=_new_id)
+    user_id: str
+    theme: str  # 主题标签（如「职业发展」「生活方式」「兴趣偏好」）
+    content: str  # 洞察正文（高层归纳结论）
+    embedding: list[float] | None = None
+    importance: float = 0.6  # 重要度（LLM 评分）
+    confidence: float = 0.7  # 置信度（LLM 评分）
+    source_count: int = 0  # 归纳自多少条记忆/实体
+    created_at: datetime = Field(default_factory=_now)
+    updated_at: datetime = Field(default_factory=_now)
+
+
+class DerivedFromEdge(BaseModel):
+    """洞察来源：Insight -[:DERIVED_FROM]-> Entity（可溯源到归纳依据）。"""
+
+    model_config = ConfigDict(extra="ignore")
+    user_id: str
+    insight_id: str
+    entity_id: str
+    created_at: datetime = Field(default_factory=_now)
+
+
 class RelationEdge(BaseModel):
     """实体间三元组关系：Entity -[:RELATION]-> Entity。"""
 
@@ -224,12 +255,14 @@ __all__ = [
     "LABEL_ENTITY",
     "LABEL_EVENT",
     "LABEL_COMMUNITY",
+    "LABEL_INSIGHT",
     "REL_HAS_CHUNK",
     "REL_HAS_STATEMENT",
     "REL_MENTIONS",
     "REL_RELATION",
     "REL_INVOLVES",
     "REL_IN_COMMUNITY",
+    "REL_DERIVED_FROM",
     "SOURCE_AUTO",
     "SOURCE_MANUAL",
     "STMT_FACT",
@@ -249,7 +282,9 @@ __all__ = [
     "EntityNode",
     "EventNode",
     "CommunityNode",
+    "InsightNode",
     "RelationEdge",
     "MentionEdge",
     "InvolvesEdge",
+    "DerivedFromEdge",
 ]

@@ -150,6 +150,18 @@ export interface TimelineEvent {
   participants: TimelineParticipant[]
 }
 
+// 反思洞察
+export interface Insight {
+  id: string
+  theme: string
+  content: string
+  importance: number
+  confidence: number
+  source_count: number
+  created_at: string | null
+  updated_at: string | null
+}
+
 export const memoryApi = {
   remember(text: string) {
     return client.post<unknown, Wrapped<MemoryItem>>('/memories/remember', { text })
@@ -186,6 +198,15 @@ export const memoryApi = {
   },
   timeline() {
     return client.get<unknown, Wrapped<TimelineEvent[]>>('/memories/timeline')
+  },
+  insights() {
+    return client.get<unknown, Wrapped<Insight[]>>('/memories/insights')
+  },
+  reflect() {
+    return client.post<unknown, Wrapped<{ insights: number }>>('/memories/reflect')
+  },
+  deleteInsight(id: string) {
+    return client.delete<unknown, Wrapped<null>>(`/memories/insights/${id}`)
   },
   list(page = 1, pageSize = 20) {
     const q = new URLSearchParams({ page: String(page), page_size: String(pageSize) })

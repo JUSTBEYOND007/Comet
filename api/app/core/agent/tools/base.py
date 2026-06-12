@@ -21,6 +21,9 @@ class ToolBuildContext:
     user_id: object  # uuid.UUID
     citations: list[dict]  # 引用收集器（知识库工具写入）
     embed_holder: dict  # embedding client 缓存（记忆工具复用）
+    # 工具统计回写（按工具 key 索引最近一次执行的统计：命中数 / 实体数 / 网页数 等）。
+    # orchestrator 在产 tool_result 事件时读取并清空，前端 chip 副文绑定。
+    stats_holder: dict[str, dict]
 
 
 # builder 签名：异步，返回一个 StructuredTool 或 None（无法构建则跳过）

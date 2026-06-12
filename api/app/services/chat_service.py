@@ -112,11 +112,13 @@ class ChatService:
         agent: AgentConfig | None,
         body: ChatStreamRequest,
         citations: list[dict],
+        stats_holder: dict[str, dict],
     ) -> list:
         """构建启用的工具列表。
 
         工具启停统一由「工具配置页」(tool_configs) 管理，这里不再读 agent 的工具开关；
         仅把对话页本轮的临时开关（如联网）作为 override 传入，优先级最高。
+        stats_holder 由调用方持有，工具执行时回写，编排器在 tool_result 事件读取并清空。
         """
         overrides: dict[str, bool] = {}
         if body.enable_knowledge is not None:
@@ -125,7 +127,9 @@ class ChatService:
             overrides["memory_search"] = body.enable_memory
         if body.enable_web_search is not None:
             overrides["web_search"] = body.enable_web_search
-        return await build_enabled_tools(self.session, user_id, citations, overrides)
+        return await build_enabled_tools(
+            self.session, user_id, citations, overrides, stats_holder=stats_holder
+        )
 
     async def stream_chat(
         self, user_id: uuid.UUID, body: ChatStreamRequest, skip_user_message: bool = False
@@ -162,7 +166,8 @@ class ChatService:
             )
             system_prompt = (persona.system_prompt.strip() if persona else "") or ""
             citations: list[dict] = []
-            tools = await self._build_tools(user_id, agent, body, citations)
+            stats_holder: dict[str, dict] = {}
+            tools = await self._build_tools(user_id, agent, body, citations, stats_holder)
             history = await self._history_messages(conv.id)
         except Exception as e:
             yield _sse("error", {"message": str(e)})
@@ -198,7 +203,9 @@ class ChatService:
                     lc_messages.append(SystemMessage(content=system_prompt))
                 lc_messages.extend(history)
                 lc_messages.append(HumanMessage(content=composed_text))
-                async for ev in run_function_calling(model, tools, lc_messages):
+                async for ev in run_function_calling(
+                    model, tools, lc_messages, stats_holder=stats_holder
+                ):
                     full_text, tool_calls = await self._emit(
                         ev, full_text, tool_calls
                     )
@@ -207,7 +214,14 @@ class ChatService:
                         yield out
             else:
                 # 弱模型：ReAct
-                async for ev in run_react(model, tools, composed_text, history, system_prompt):
+                async for ev in run_react(
+                    model,
+                    tools,
+                    composed_text,
+                    history,
+                    system_prompt,
+                    stats_holder=stats_holder,
+                ):
                     full_text, tool_calls = await self._emit(
                         ev, full_text, tool_calls
                     )
@@ -254,11 +268,31 @@ class ChatService:
     async def _emit(
         ev: dict, full_text: str, tool_calls: list[dict]
     ) -> tuple[str, list[dict]]:
-        """累积文本与工具调用记录。"""
+        """累积文本与工具调用记录。
+
+        tool_start 时占位一条新 run（status=running）；tool_result 回填同名最近一条 running
+        的 status / stats / latency_ms / preview，使消息存档（meta_data.tool_calls）也能复现
+        chip 副文与统计，刷新历史不丢信息。
+        """
         if ev["type"] == "token":
             full_text += ev["text"]
         elif ev["type"] in {"tool_call", "tool_start"}:
-            tool_calls.append({"tool": ev["tool"], "query": ev.get("query", "")})
+            tool_calls.append({
+                "tool": ev["tool"],
+                "query": ev.get("query", ""),
+                "status": "running",
+            })
+        elif ev["type"] == "tool_result":
+            for item in reversed(tool_calls):
+                if (
+                    item.get("tool") == ev["tool"]
+                    and item.get("status") == "running"
+                ):
+                    item["status"] = ev.get("status", "success")
+                    item["stats"] = ev.get("stats") or {}
+                    item["latency_ms"] = ev.get("latency_ms")
+                    item["preview"] = ev.get("text", "")
+                    break
         elif ev["type"] == "final" and not full_text:
             full_text = ev["text"]
         return full_text, tool_calls
@@ -268,10 +302,10 @@ class ChatService:
         """编排事件 → SSE。final 不单独发（token 已累积）。"""
         if ev["type"] == "token":
             return _sse("token", {"text": ev["text"]})
-        if ev["type"] == "thought":
-            return _sse("thought", {"text": ev["text"]})
         if ev["type"] == "tool_start":
-            return _sse("tool_start", {"tool": ev["tool"], "query": ev.get("query", "")})
+            return _sse(
+                "tool_start", {"tool": ev["tool"], "query": ev.get("query", "")}
+            )
         if ev["type"] == "tool_result":
             return _sse(
                 "tool_result",
@@ -280,10 +314,10 @@ class ChatService:
                     "query": ev.get("query", ""),
                     "status": ev.get("status", "success"),
                     "text": ev.get("text", ""),
+                    "stats": ev.get("stats") or {},
+                    "latency_ms": ev.get("latency_ms"),
                 },
             )
-        if ev["type"] == "tool_call":
-            return _sse("tool_call", {"tool": ev["tool"], "query": ev.get("query", "")})
         return None
 
     async def _stream_multimodal(

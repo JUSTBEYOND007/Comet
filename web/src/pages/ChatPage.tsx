@@ -83,21 +83,6 @@ export default function ChatPage() {
 
   const convGroups = groupConversationsByDate(conversations)
 
-  const appendThought = (messageId: string, text: string) => {
-    const thought = text.trim()
-    if (!thought) return
-    setMessages((prev) =>
-      prev.map((m) =>
-        m.id === messageId
-          ? {
-              ...m,
-              thoughts: [...(m.thoughts ?? []), thought],
-            }
-          : m,
-      ),
-    )
-  }
-
   const startToolRun = (messageId: string, tc: ToolCall) => {
     setMessages((prev) =>
       prev.map((m) => {
@@ -120,7 +105,12 @@ export default function ChatPage() {
 
   const finishToolRun = (
     messageId: string,
-    tc: ToolCall & { status?: ToolRunStatus; text?: string },
+    tc: ToolCall & {
+      status?: ToolRunStatus
+      text?: string
+      stats?: Record<string, unknown>
+      latency_ms?: number
+    },
   ) => {
     setMessages((prev) =>
       prev.map((m) => {
@@ -144,6 +134,8 @@ export default function ChatPage() {
                   ...run,
                   status: tc.status ?? 'success',
                   result: tc.text,
+                  stats: tc.stats,
+                  latencyMs: tc.latency_ms,
                 }
               : run,
           ),
@@ -329,7 +321,6 @@ export default function ChatPage() {
               content: '',
               toolCalls: [],
               toolRuns: [],
-              thoughts: [],
               citations: undefined,
               streaming: true,
               feedback: null,
@@ -344,7 +335,6 @@ export default function ChatPage() {
           prev.map((m) => (m.id === aiId ? { ...m, content: m.content + t } : m)),
         )
       },
-      onThought: (text) => appendThought(aiId, text),
       onToolStart: (tc) => startToolRun(aiId, tc),
       onToolResult: (tc) => finishToolRun(aiId, tc),
       onCitation: (cites) => {
@@ -484,7 +474,6 @@ export default function ChatPage() {
       content: '',
       toolCalls: [],
       toolRuns: [],
-      thoughts: [],
       streaming: true,
     }
     setMessages((prev) => [...prev, userMsg, aiMsg])
@@ -517,7 +506,6 @@ export default function ChatPage() {
             ),
           )
         },
-        onThought: (text) => appendThought(aiMsg.id, text),
         onToolStart: (tc) => startToolRun(aiMsg.id, tc),
         onToolResult: (tc) => finishToolRun(aiMsg.id, tc),
         onCitation: (cites) => {

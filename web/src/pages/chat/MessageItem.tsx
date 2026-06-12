@@ -1,11 +1,9 @@
 import { useState } from 'react'
 import { Button, Space, Tag, Tooltip, message as antdMessage } from 'antd'
 import {
-  CheckCircleFilled,
   CopyOutlined,
   DislikeFilled,
   DislikeOutlined,
-  ExclamationCircleFilled,
   FileTextOutlined,
   LikeFilled,
   LikeOutlined,
@@ -14,12 +12,13 @@ import {
   StarOutlined,
 } from '@ant-design/icons'
 import MarkdownMessage from '@/components/MarkdownMessage'
+import ChatProcess from './ChatProcess'
 import { favoriteApi } from '@/api/favorites'
 import { chatApi } from '@/api/chat'
 import { copyText } from '@/utils/clipboard'
 import { AuthenticatedImage } from '@/components/AuthenticatedImage'
 import type { ChatAvatars, UiMessage } from './types'
-import { formatMsgTime, resolveToolMeta } from './types'
+import { formatMsgTime } from './types'
 
 export default function MessageItem({
   msg,
@@ -101,15 +100,38 @@ export default function MessageItem({
     )
   }
   const hasAvatar = showAvatars && !!sideAvatarUrl
-  const hasProcess =
-    !isUser && ((msg.thoughts?.length ?? 0) > 0 || (msg.toolRuns?.length ?? 0) > 0)
-  const shouldRenderBubble = isUser || msg.content || !hasProcess
-
-  const toolStatusText = {
-    running: '调用中',
-    success: '已完成',
-    error: '失败',
-  }
+  // AI 过程展示数据：toolRuns（实时）或历史 toolCalls（已存档复现）
+  // 历史消息只有 toolCalls（含 status/stats/latency_ms/preview/query/tool）；运行中走 toolRuns。
+  // 把它们规范成 ToolRun 数组喂给 ChatProcess 即可。
+  const processRuns = (() => {
+    if (isUser) return undefined
+    if (msg.toolRuns && msg.toolRuns.length > 0) return msg.toolRuns
+    if (msg.toolCalls && msg.toolCalls.length > 0) {
+      return msg.toolCalls.map((tc, i) => {
+        const ext = tc as unknown as Record<string, unknown>
+        return {
+          id: `${tc.tool}-hist-${i}`,
+          tool: tc.tool,
+          query: tc.query,
+          status: ((ext.status as string) || 'success') as
+            | 'running'
+            | 'success'
+            | 'error',
+          result: typeof ext.preview === 'string' ? (ext.preview as string) : undefined,
+          stats: ext.stats as Record<string, unknown> | undefined,
+          latencyMs:
+            typeof ext.latency_ms === 'number'
+              ? (ext.latency_ms as number)
+              : undefined,
+        }
+      })
+    }
+    return undefined
+  })()
+  const hasProcess = !isUser && (processRuns?.length ?? 0) > 0
+  // AI 流式中且还没出 content 时不渲染空气泡（过程组件已经表达了"在动"）
+  const shouldRenderBubble =
+    isUser || (msg.content ? true : !msg.streaming && !hasProcess)
 
   return (
     <div
@@ -124,61 +146,14 @@ export default function MessageItem({
     >
       {renderAvatar()}
       <div style={{ maxWidth: '82%', minWidth: 0 }}>
-        {/* AI 过程流：思考与工具调用会在 SSE 到达时即时追加 */}
-        {hasProcess && (
-          <div className="chat-process">
-            {msg.thoughts?.map((thought, i) => (
-              <div key={`thought-${i}`} className="chat-process-row">
-                <span
-                  className={`chat-process-dot${
-                    msg.streaming && i === (msg.thoughts?.length ?? 0) - 1
-                      ? ' chat-process-dot--running'
-                      : ''
-                  }`}
-                />
-                <span className="chat-process-text">{thought}</span>
-              </div>
-            ))}
-            {msg.toolRuns?.map((run) => {
-              const meta = resolveToolMeta(run.tool)
-              return (
-                <Tooltip key={run.id} title={run.query || run.result}>
-                  <div className={`chat-process-tool chat-process-tool--${run.status}`}>
-                    <span className="chat-process-tool__icon">
-                      {run.status === 'running' ? (
-                        <span className="chat-process-spinner" />
-                      ) : run.status === 'success' ? (
-                        <CheckCircleFilled />
-                      ) : (
-                        <ExclamationCircleFilled />
-                      )}
-                    </span>
-                    <span className="chat-process-tool__name">
-                      {meta.icon} {meta.label}
-                    </span>
-                    <span className="chat-process-tool__query">
-                      {run.query || toolStatusText[run.status]}
-                    </span>
-                  </div>
-                </Tooltip>
-              )
-            })}
-          </div>
-        )}
-
-        {!hasProcess && !isUser && msg.toolCalls && msg.toolCalls.length > 0 && (
-          <Space size={[4, 4]} wrap style={{ marginBottom: 8 }}>
-            {msg.toolCalls.map((tc, i) => {
-              const meta = resolveToolMeta(tc.tool)
-              return (
-                <Tooltip key={i} title={tc.query}>
-                  <Tag color="blue" style={{ borderRadius: 12, fontSize: 13, padding: '2px 10px' }}>
-                    {meta.icon} {meta.label}
-                  </Tag>
-                </Tooltip>
-              )
-            })}
-          </Space>
+        {/* AI 过程流：顶部进度线 + 状态条 + 工具 chip 行 + 可展开详情 */}
+        {!isUser && (msg.streaming || hasProcess) && (
+          <ChatProcess
+            toolRuns={processRuns}
+            citations={msg.citations}
+            hasContent={!!msg.content}
+            streaming={!!msg.streaming}
+          />
         )}
 
         {shouldRenderBubble && (

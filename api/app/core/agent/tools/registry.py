@@ -30,17 +30,25 @@ async def build_enabled_tools(
     user_id: uuid.UUID,
     citations: list[dict],
     overrides: dict[str, bool] | None = None,
+    stats_holder: dict[str, dict] | None = None,
 ) -> list[BaseTool]:
     """构建用户当前启用的工具列表（内置 + MCP）。
 
     overrides: {tool_key: bool} 本轮临时开关（对话请求传入），优先级最高。
     citations: 引用收集器，传给知识库工具。
+    stats_holder: 工具统计回写（按工具 key 索引），由调用方持有，orchestrator 读后用于
+        填充 tool_result 事件的 stats 字段（命中数/网页数等）。
     """
     overrides = overrides or {}
     enabled = await _enabled_map(session, user_id)
     embed_holder: dict = {}
+    stats_holder = stats_holder if stats_holder is not None else {}
     ctx = ToolBuildContext(
-        session=session, user_id=user_id, citations=citations, embed_holder=embed_holder
+        session=session,
+        user_id=user_id,
+        citations=citations,
+        embed_holder=embed_holder,
+        stats_holder=stats_holder,
     )
 
     tools: list[BaseTool] = []

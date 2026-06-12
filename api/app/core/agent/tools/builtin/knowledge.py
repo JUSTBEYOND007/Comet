@@ -15,11 +15,18 @@ async def _build(ctx: ToolBuildContext) -> StructuredTool:
     session = ctx.session
     user_id = ctx.user_id
     citations = ctx.citations
+    stats_holder = ctx.stats_holder
 
     async def _run(query: str) -> str:
         from app.core.rag.search import hybrid_search
 
         hits = await hybrid_search(session, user_id, query, top_k=5)
+        # 统计：命中条数 + 涉及文档数（按 doc_name 去重；无名时按 source_id）
+        doc_keys = {(h.get("doc_name") or h.get("source_id")) for h in hits if h}
+        stats_holder[KEY] = {
+            "hit_count": len(hits),
+            "doc_count": len([k for k in doc_keys if k]),
+        }
         if not hits:
             return "知识库中没有检索到相关内容。"
         seen = {c["source_id"] for c in citations}

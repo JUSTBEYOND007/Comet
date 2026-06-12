@@ -8,7 +8,6 @@ export interface UiMessage {
   citations?: Citation[]
   toolCalls?: ToolCall[]
   toolRuns?: ToolRun[]
-  thoughts?: string[]
   images?: string[] // 图片 url（用户消息）
   attachments?: { file_name: string }[] // 对话临时文档附件（仅显示文件名）
   streaming?: boolean

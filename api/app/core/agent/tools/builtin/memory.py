@@ -16,6 +16,7 @@ async def _build(ctx: ToolBuildContext) -> StructuredTool:
     session = ctx.session
     user_id = ctx.user_id
     embed_holder = ctx.embed_holder
+    stats_holder = ctx.stats_holder
 
     async def _run(query: str) -> str:
         embed_client = embed_holder.get("embedding")
@@ -27,6 +28,12 @@ async def _build(ctx: ToolBuildContext) -> StructuredTool:
         results = await search_memory(
             embed_client=embed_client, user_id=user_id, query=query, top_k=10
         )
+        # 统计：实体数 + 关系数（一跳邻居关系总和）
+        relation_count = sum(len(r.get("relations") or []) for r in results)
+        stats_holder[KEY] = {
+            "entity_count": len(results),
+            "relation_count": relation_count,
+        }
         if not results:
             return "没有检索到相关记忆。"
         return "检索到以下用户记忆：\n\n" + format_memory_context(results)

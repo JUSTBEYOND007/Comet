@@ -32,16 +32,23 @@ async def _build(ctx: ToolBuildContext) -> StructuredTool | None:
         # 未配置 websearch 模型 → 不构建该工具
         return None
     provider, api_key = ws
+    stats_holder = ctx.stats_holder
 
     async def _run(query: str) -> str:
         from app.core.agent.web_search import web_search
 
         try:
             result = await web_search(provider, api_key, query, top_k=10)
-            return f"联网搜索到以下信息：\n\n{result}" if result else "联网搜索没有返回结果。"
         except Exception as e:
             logger.warning("联网搜索失败: %s", e)
+            stats_holder[KEY] = {"web_count": 0, "provider": provider}
             return f"联网搜索失败：{e}"
+        # 统计：按结果块数 [1] [2] ... 推断网页数；空返回则记 0
+        import re
+
+        web_count = len(re.findall(r"^\[\d+\]\s", result, re.MULTILINE)) if result else 0
+        stats_holder[KEY] = {"web_count": web_count, "provider": provider}
+        return f"联网搜索到以下信息：\n\n{result}" if result else "联网搜索没有返回结果。"
 
     return StructuredTool.from_function(
         coroutine=_run,

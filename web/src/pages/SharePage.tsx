@@ -61,8 +61,9 @@ export default function SharePage() {
         <div className="share-body">
           {data.messages.map((m, i) => {
             const isUser = m.role === 'user'
-            // 群聊：每条 AI 消息带自己的发言人头像/名字
-            const aiAvatar = m.sender_avatar || data.ai_avatar
+            // 群聊：每条 AI 消息带自己的发言人头像/名字；单聊 fallback 到全局 ai_avatar
+            const isGroupMsg = !!m.sender_name
+            const aiAvatar = isGroupMsg ? m.sender_avatar : (m.sender_avatar || data.ai_avatar)
             const aiName = m.sender_name || data.ai_name
             return (
               <div
@@ -77,6 +78,8 @@ export default function SharePage() {
                   )
                 ) : aiAvatar ? (
                   <img src={aiAvatar} alt={aiName || 'AI'} className="share-avatar share-avatar-ai" />
+                ) : aiName ? (
+                  <div className="share-avatar share-avatar-user">{aiName.slice(0, 1)}</div>
                 ) : (
                   <img src={logo} alt="AI" className="share-avatar share-avatar-ai" />
                 )}

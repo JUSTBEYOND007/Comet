@@ -3,6 +3,7 @@
 启停优先级：本轮 overrides（对话请求临时开关） > 用户 tool_configs 持久配置 > ToolSpec.default_enabled。
 """
 import uuid
+from contextlib import asynccontextmanager
 
 from langchain_core.tools import BaseTool
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -25,22 +26,15 @@ async def _enabled_map(session: AsyncSession, user_id: uuid.UUID) -> dict[str, b
     return result
 
 
-async def build_enabled_tools(
+async def _build_builtin_tools(
     session: AsyncSession,
     user_id: uuid.UUID,
     citations: list[dict],
-    overrides: dict[str, bool] | None = None,
-    stats_holder: dict[str, dict] | None = None,
-    kb_ids: list[str] | None = None,
+    overrides: dict[str, bool] | None,
+    stats_holder: dict[str, dict] | None,
+    kb_ids: list[str] | None,
 ) -> list[BaseTool]:
-    """构建用户当前启用的工具列表（内置 + MCP）。
-
-    overrides: {tool_key: bool} 本轮临时开关（对话请求传入），优先级最高。
-    citations: 引用收集器，传给知识库工具。
-    stats_holder: 工具统计回写（按工具 key 索引），由调用方持有，orchestrator 读后用于
-        填充 tool_result 事件的 stats 字段（命中数/网页数等）。
-    kb_ids: 知识库检索范围（已启用检索的库 id 列表），传给知识库工具；None=不限全部库。
-    """
+    """只构建内置工具（知识库/记忆/联网/时间），不含 MCP。"""
     overrides = overrides or {}
     enabled = await _enabled_map(session, user_id)
     embed_holder: dict = {}
@@ -53,7 +47,6 @@ async def build_enabled_tools(
         stats_holder=stats_holder,
         kb_ids=kb_ids,
     )
-
     tools: list[BaseTool] = []
     for key, spec in BUILTIN_REGISTRY.items():
         on = overrides.get(key, enabled.get(key, spec.default_enabled))
@@ -65,8 +58,31 @@ async def build_enabled_tools(
                 tools.append(tool)
         except Exception as e:
             logger.warning("构建工具失败（跳过）: %s: %s", key, e)
+    return tools
 
-    # MCP 工具（⑥-B 接入）
+
+async def build_enabled_tools(
+    session: AsyncSession,
+    user_id: uuid.UUID,
+    citations: list[dict],
+    overrides: dict[str, bool] | None = None,
+    stats_holder: dict[str, dict] | None = None,
+    kb_ids: list[str] | None = None,
+) -> list[BaseTool]:
+    """构建用户当前启用的工具列表（内置 + MCP，MCP 为无状态版本，每次调用新建连接）。
+
+    保留给不便用上下文管理器的场景；问答/群聊生成请用 build_enabled_tools_cm（持久会话，省握手）。
+
+    overrides: {tool_key: bool} 本轮临时开关（对话请求传入），优先级最高。
+    citations: 引用收集器，传给知识库工具。
+    stats_holder: 工具统计回写（按工具 key 索引），由调用方持有，orchestrator 读后用于
+        填充 tool_result 事件的 stats 字段（命中数/网页数等）。
+    kb_ids: 知识库检索范围（已启用检索的库 id 列表），传给知识库工具；None=不限全部库。
+    """
+    tools = await _build_builtin_tools(
+        session, user_id, citations, overrides, stats_holder, kb_ids
+    )
+    # MCP 工具（⑥-B 接入，无状态版本）
     try:
         from app.core.agent.tools.mcp.loader import build_mcp_tools
 
@@ -77,6 +93,36 @@ async def build_enabled_tools(
         logger.warning("构建 MCP 工具失败（忽略）: %s", e)
 
     return tools
+
+
+@asynccontextmanager
+async def build_enabled_tools_cm(
+    session: AsyncSession,
+    user_id: uuid.UUID,
+    citations: list[dict],
+    overrides: dict[str, bool] | None = None,
+    stats_holder: dict[str, dict] | None = None,
+    kb_ids: list[str] | None = None,
+):
+    """构建启用工具（内置 + MCP）的上下文管理器版本：MCP 走「持久会话」。
+
+    用法：
+        async with build_enabled_tools_cm(...) as tools:
+            ... 在此期间用 tools 跑工具编排（同一批 MCP 会话整轮复用，不重复握手）...
+        # 退出时自动关闭 MCP 会话（正常/异常/取消都清理）
+
+    MCP 模块不可用时，仅产出内置工具。
+    """
+    tools = await _build_builtin_tools(
+        session, user_id, citations, overrides, stats_holder, kb_ids
+    )
+    try:
+        from app.core.agent.tools.mcp.loader import open_mcp_tools
+    except ImportError:
+        yield tools
+        return
+    async with open_mcp_tools(session, user_id) as mcp_tools:
+        yield [*tools, *mcp_tools]
 
 
 async def list_tools_for_user(
@@ -99,4 +145,4 @@ async def list_tools_for_user(
     return out
 
 
-__all__ = ["build_enabled_tools", "list_tools_for_user"]
+__all__ = ["build_enabled_tools", "build_enabled_tools_cm", "list_tools_for_user"]

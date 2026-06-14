@@ -16,6 +16,7 @@ SSE 事件：
 import json
 import uuid
 from collections.abc import AsyncGenerator
+from contextlib import AsyncExitStack
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -603,6 +604,7 @@ class GroupChatService:
         """
         if not await bus.acquire_turn_lock(str(conv_id)):
             return
+        service: GroupChatService | None = None
         try:
             async with SessionLocal() as session:
                 service = GroupChatService(session)
@@ -611,6 +613,13 @@ class GroupChatService:
             logger.error("群聊后台 AI 回合失败: conv=%s err=%s", conv_id, e, exc_info=True)
             await bus.publish(str(conv_id), "error", {"message": f"AI 接话出错：{e}"})
         finally:
+            # 关闭本轮持久 MCP 会话（与开启在同一任务，安全）；失败只记日志
+            stack = getattr(service, "_mcp_stack", None) if service else None
+            if stack is not None:
+                try:
+                    await stack.aclose()
+                except Exception as e:  # noqa: BLE001
+                    logger.warning("关闭群聊 MCP 会话出错（忽略）: %s", e)
             await bus.release_turn_lock(str(conv_id))
 
     async def _ai_turn(
@@ -657,11 +666,13 @@ class GroupChatService:
             self.session, owner_id, temperature=0.8, streaming=True
         )
 
-        # 群级工具开关
+        # 群级工具开关：开启则用「持久 MCP 会话」构建工具，整轮多角色复用同一批会话，
+        # 不重复握手；会话在 _run_ai_turn_bg 的 finally 里随 self._mcp_stack 关闭，避免泄漏。
+        self._mcp_stack = AsyncExitStack()
         tools = []
         if conv.enable_tools:
             try:
-                from app.core.agent.tools import build_enabled_tools
+                from app.core.agent.tools import build_enabled_tools_cm
                 from app.repositories.knowledge_base_repository import (
                     KnowledgeBaseRepository,
                 )
@@ -671,12 +682,14 @@ class GroupChatService:
                 kb_ids = await KnowledgeBaseRepository(
                     self.session
                 ).list_chat_enabled_ids(owner_id)
-                tools = await build_enabled_tools(
-                    self.session,
-                    owner_id,
-                    self._tool_citations,
-                    stats_holder=self._tool_stats,
-                    kb_ids=kb_ids,
+                tools = await self._mcp_stack.enter_async_context(
+                    build_enabled_tools_cm(
+                        self.session,
+                        owner_id,
+                        self._tool_citations,
+                        stats_holder=self._tool_stats,
+                        kb_ids=kb_ids,
+                    )
                 )
             except Exception as e:
                 logger.warning("群聊工具构建失败（降级为纯对话）: %s", e)

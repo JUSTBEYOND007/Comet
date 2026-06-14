@@ -61,6 +61,24 @@ interface GroupToolRun {
   query?: string
   status?: string
 }
+
+// 工具 chip 去重：同一工具多次调用合并成一个（带 ×次数），running 状态合并保留，
+// 避免重复调用刷出一长串相同 chip。
+function dedupToolRuns(
+  runs: GroupToolRun[],
+): { tool: string; count: number; running: boolean }[] {
+  const map = new Map<string, { tool: string; count: number; running: boolean }>()
+  for (const r of runs) {
+    const e = map.get(r.tool)
+    if (e) {
+      e.count += 1
+      if (r.status === 'running') e.running = true
+    } else {
+      map.set(r.tool, { tool: r.tool, count: 1, running: r.status === 'running' })
+    }
+  }
+  return Array.from(map.values())
+}
 interface GroupUiMessage {
   id: string
   role: 'user' | 'assistant'
@@ -1102,15 +1120,16 @@ export default function GroupChatPage() {
                     <div className="gc-sender-name">{name}</div>
                     {m.toolRuns && m.toolRuns.length > 0 && (
                       <div className="gc-tool-chips">
-                        {m.toolRuns.map((tr, idx) => {
+                        {dedupToolRuns(m.toolRuns).map((tr, idx) => {
                           const meta = resolveToolMeta(tr.tool)
                           return (
                             <span
                               key={idx}
-                              className={`gc-tool-chip ${tr.status === 'running' ? 'gc-tool-chip--run' : ''}`}
+                              className={`gc-tool-chip ${tr.running ? 'gc-tool-chip--run' : ''}`}
                             >
                               {meta.icon} {meta.label}
-                              {tr.status === 'running' && ' …'}
+                              {tr.count > 1 && ` ×${tr.count}`}
+                              {tr.running && ' …'}
                             </span>
                           )
                         })}

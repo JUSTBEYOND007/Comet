@@ -107,6 +107,9 @@ async def run_function_calling(
     model_with_tools = model.bind_tools(tools) if tools else model
     full_text = ""
     stats_holder = stats_holder if stats_holder is not None else {}
+    # 同一轮内的工具调用结果缓存：(工具名+参数) 相同则复用上次结果，
+    # 不再重复握手+执行（消除模型用相同参数重复调同一工具的浪费）。
+    call_cache: dict[str, str] = {}
 
     for _ in range(MAX_TOOL_ITERATIONS):
         gathered = None
@@ -130,9 +133,33 @@ async def run_function_calling(
             args = tc.get("args", {}) or {}
             query = args.get("query", "")
             yield {"type": "tool_start", "tool": name, "query": query}
+            try:
+                cache_key = f"{name}:{json.dumps(args, ensure_ascii=False, sort_keys=True)}"
+            except (TypeError, ValueError):
+                cache_key = f"{name}:{args}"
             tool = tool_map.get(name)
             status = "success"
             t0 = time.monotonic()
+            cached = call_cache.get(cache_key)
+            if cached is not None:
+                # 命中本轮缓存：相同工具+参数已调用过，直接复用，跳过握手与执行
+                formatted = cached
+                latency_ms = 0
+                stats: dict = {}
+                yield {
+                    "type": "tool_result",
+                    "tool": name,
+                    "query": query,
+                    "status": "success",
+                    "text": _truncate(formatted),
+                    "stats": stats,
+                    "latency_ms": latency_ms,
+                    "cached": True,
+                }
+                messages.append(
+                    ToolMessage(content=formatted, tool_call_id=tc.get("id", name))
+                )
+                continue
             if tool is None:
                 observation = f"未知工具：{name}"
                 status = "error"
@@ -145,6 +172,8 @@ async def run_function_calling(
             latency_ms = int((time.monotonic() - t0) * 1000)
             stats = stats_holder.pop(name, {}) if stats_holder is not None else {}
             formatted = _format_observation(observation)
+            if status == "success":
+                call_cache[cache_key] = formatted
             yield {
                 "type": "tool_result",
                 "tool": name,
@@ -184,6 +213,8 @@ async def run_react(
     )
     convo: list = [SystemMessage(content=sys), *history, HumanMessage(content=user_text)]
     stats_holder = stats_holder if stats_holder is not None else {}
+    # 同一轮内工具结果缓存（工具名+query 相同则复用）
+    call_cache: dict[str, str] = {}
 
     for _ in range(MAX_TOOL_ITERATIONS):
         resp = await model.ainvoke(convo)
@@ -208,9 +239,26 @@ async def run_react(
         query = (input_match.group(1).strip().splitlines()[0].strip() if input_match else user_text)
         yield {"type": "tool_start", "tool": tool_name, "query": query}
 
+        cache_key = f"{tool_name}:{query}"
         tool = tool_map.get(tool_name)
         status = "success"
         t0 = time.monotonic()
+        cached = call_cache.get(cache_key)
+        if cached is not None:
+            formatted = cached
+            yield {
+                "type": "tool_result",
+                "tool": tool_name,
+                "query": query,
+                "status": "success",
+                "text": _truncate(formatted),
+                "stats": {},
+                "latency_ms": 0,
+                "cached": True,
+            }
+            convo.append(AIMessage(content=text))
+            convo.append(HumanMessage(content=f"Observation: {formatted}"))
+            continue
         if tool is None:
             observation = f"未知工具：{tool_name}"
             status = "error"
@@ -223,6 +271,8 @@ async def run_react(
         latency_ms = int((time.monotonic() - t0) * 1000)
         stats = stats_holder.pop(tool_name, {}) if stats_holder is not None else {}
         formatted = _format_observation(observation)
+        if status == "success":
+            call_cache[cache_key] = formatted
         yield {
             "type": "tool_result",
             "tool": tool_name,

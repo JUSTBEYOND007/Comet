@@ -14,7 +14,7 @@ from langchain_core.messages import AIMessage, HumanMessage, SystemMessage
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.agent.orchestrator import run_function_calling, run_react
-from app.core.agent.tools import build_enabled_tools
+from app.core.agent.tools import build_enabled_tools, build_enabled_tools_cm
 from app.core.realtime import bus
 from app.core.llm.chat_model import (
     build_chat_model,
@@ -214,24 +214,14 @@ class ChatService:
                 parts.append("参考以下示例的风格作答：\n\n" + "\n\n".join(examples))
         return "\n\n".join(parts)
 
-    async def _build_tools(
-        self,
-        user_id: uuid.UUID,
-        agent: AgentConfig | None,
-        body: ChatStreamRequest,
-        citations: list[dict],
-        stats_holder: dict[str, dict],
-        skill=None,
-    ) -> list:
-        """构建启用的工具列表。
+    async def _tool_scope(
+        self, user_id: uuid.UUID, body: ChatStreamRequest, skill=None
+    ) -> tuple[dict[str, bool], list[str] | None]:
+        """计算本轮工具的 overrides（启停覆盖）与知识库检索范围 kb_ids。
 
-        工具启停统一由「工具配置页」(tool_configs) 管理，这里不再读 agent 的工具开关；
-        仅把对话页本轮的临时开关（如联网）作为 override 传入，优先级最高。
-        stats_holder 由调用方持有，工具执行时回写，编排器在 tool_result 事件读取并清空。
-
-        skill（本轮挂载的技能）若存在：
-        - tool_keys 非空 → 工具白名单：只启用白名单内的工具（其余全部关闭，覆盖全局配置）。
-        - kb_id 非空 → 知识库检索范围限定到该库（优先于对话页启用的库集合）。
+        - 对话页本轮临时开关（联网/知识库/记忆）作为 override，优先级最高。
+        - 技能 tool_keys 非空 → 工具白名单（只开白名单内的）。
+        - 知识库范围：技能绑库优先，否则取用户「已启用检索」的库集合。
         """
         overrides: dict[str, bool] = {}
         if body.enable_knowledge is not None:
@@ -241,7 +231,6 @@ class ChatService:
         if body.enable_web_search is not None:
             overrides["web_search"] = body.enable_web_search
 
-        # 技能工具白名单：勾了就只用这些工具（关掉其余干扰），优先级最高
         if skill and (skill.tool_keys or []):
             from app.core.agent.tools.base import BUILTIN_REGISTRY
 
@@ -249,17 +238,33 @@ class ChatService:
             for key in BUILTIN_REGISTRY:
                 overrides[key] = key in whitelist
 
-        # 知识库检索范围：技能绑了库优先，否则取用户「已启用检索」的库集合
         from app.repositories.knowledge_base_repository import (
             KnowledgeBaseRepository,
         )
 
         if skill and skill.kb_id:
-            kb_ids = [str(skill.kb_id)]
+            kb_ids: list[str] | None = [str(skill.kb_id)]
         else:
             kb_ids = await KnowledgeBaseRepository(self.session).list_chat_enabled_ids(
                 user_id
             )
+        return overrides, kb_ids
+
+    async def _build_tools(
+        self,
+        user_id: uuid.UUID,
+        agent: AgentConfig | None,
+        body: ChatStreamRequest,
+        citations: list[dict],
+        stats_holder: dict[str, dict],
+        skill=None,
+    ) -> list:
+        """构建启用的工具列表（无状态 MCP 版本，保留备用）。
+
+        工具启停统一由「工具配置页」(tool_configs) 管理，这里不再读 agent 的工具开关；
+        仅把对话页本轮的临时开关（如联网）作为 override 传入，优先级最高。
+        """
+        overrides, kb_ids = await self._tool_scope(user_id, body, skill)
         return await build_enabled_tools(
             self.session,
             user_id,
@@ -559,64 +564,78 @@ class ChatService:
         model, config = await build_default_chat_model(
             self.session, user_id, temperature=temperature, streaming=True
         )
-        system_prompt = self._compose_system_prompt(persona, skill)
+        base_prompt = self._compose_system_prompt(persona, skill)
         stats_holder: dict[str, dict] = {}
-        tools = await self._build_tools(
-            user_id, agent, body, citations, stats_holder, skill=skill
-        )
+        composed_text = _compose_with_attachments(user_text, attachments)
+
         from app.core.agent.context_hint import current_context_block
 
-        system_prompt = (
-            system_prompt + "\n\n" + current_context_block(with_tool_hint=bool(tools))
-        ).strip()
-        history = await self._history_messages(conv.id)
-        if agent is None or agent.enable_active_recall:
-            recall = await self._recall_memory(user_id, user_text)
-            if recall:
-                system_prompt = (system_prompt + "\n\n" + recall).strip()
-        if agent is not None and agent.enable_cross_session:
-            cross = await self._cross_session_context(user_id, conv.id)
-            if cross:
-                system_prompt = (system_prompt + "\n\n" + cross).strip()
+        async def _assemble_prompt(has_tools: bool) -> str:
+            """组装 system prompt：人设/技能 + 时效引导 + 主动召回 + 跨会话。"""
+            sp = (
+                base_prompt + "\n\n" + current_context_block(with_tool_hint=has_tools)
+            ).strip()
+            if agent is None or agent.enable_active_recall:
+                recall = await self._recall_memory(user_id, user_text)
+                if recall:
+                    sp = (sp + "\n\n" + recall).strip()
+            if agent is not None and agent.enable_cross_session:
+                cross = await self._cross_session_context(user_id, conv.id)
+                if cross:
+                    sp = (sp + "\n\n" + cross).strip()
+            return sp
 
-        composed_text = _compose_with_attachments(user_text, attachments)
+        history = await self._history_messages(conv.id)
+
         if body.image_keys:
-            # 多模态输入：用多模态模型看图回答（不走工具编排）
+            # 多模态输入：用多模态模型看图回答（不走工具编排，无需 MCP 会话）
+            system_prompt = await _assemble_prompt(has_tools=False)
             async for token in self._stream_multimodal(
                 user_id, system_prompt, history, composed_text, body.image_keys
             ):
                 yield {"type": "token", "text": token}
-        elif not tools:
-            # 无工具：纯流式
-            lc_messages: list = []
-            if system_prompt:
-                lc_messages.append(SystemMessage(content=system_prompt))
-            lc_messages.extend(history)
-            lc_messages.append(HumanMessage(content=composed_text))
-            async for chunk in model.astream(lc_messages):
-                if chunk.content:
-                    yield {"type": "token", "text": chunk.content}
-        elif supports_function_call(config):
-            # 强模型：原生 function calling
-            lc_messages = []
-            if system_prompt:
-                lc_messages.append(SystemMessage(content=system_prompt))
-            lc_messages.extend(history)
-            lc_messages.append(HumanMessage(content=composed_text))
-            async for ev in run_function_calling(
-                model, tools, lc_messages, stats_holder=stats_holder
-            ):
-                yield ev
-        else:
-            # 弱模型：ReAct
-            async for ev in run_react(
-                model, tools, composed_text, history, system_prompt,
-                stats_holder=stats_holder,
-            ):
-                yield ev
+            if citations:
+                yield {"type": "citation", "citations": citations}
+            return
 
-        if citations:
-            yield {"type": "citation", "citations": citations}
+        # 非多模态：在「持久 MCP 会话」上下文里构建工具并跑编排，
+        # 整轮工具调用复用同一批 MCP 会话，不重复握手（退出自动关会话）。
+        overrides, kb_ids = await self._tool_scope(user_id, body, skill)
+        async with build_enabled_tools_cm(
+            self.session, user_id, citations, overrides, stats_holder, kb_ids
+        ) as tools:
+            system_prompt = await _assemble_prompt(has_tools=bool(tools))
+            if not tools:
+                # 无工具：纯流式
+                lc_messages: list = []
+                if system_prompt:
+                    lc_messages.append(SystemMessage(content=system_prompt))
+                lc_messages.extend(history)
+                lc_messages.append(HumanMessage(content=composed_text))
+                async for chunk in model.astream(lc_messages):
+                    if chunk.content:
+                        yield {"type": "token", "text": chunk.content}
+            elif supports_function_call(config):
+                # 强模型：原生 function calling
+                lc_messages = []
+                if system_prompt:
+                    lc_messages.append(SystemMessage(content=system_prompt))
+                lc_messages.extend(history)
+                lc_messages.append(HumanMessage(content=composed_text))
+                async for ev in run_function_calling(
+                    model, tools, lc_messages, stats_holder=stats_holder
+                ):
+                    yield ev
+            else:
+                # 弱模型：ReAct
+                async for ev in run_react(
+                    model, tools, composed_text, history, system_prompt,
+                    stats_holder=stats_holder,
+                ):
+                    yield ev
+
+            if citations:
+                yield {"type": "citation", "citations": citations}
 
     async def _save_partial_on_error(
         self,

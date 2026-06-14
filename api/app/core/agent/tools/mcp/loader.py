@@ -10,8 +10,10 @@
 import re
 import time
 import uuid
+from contextlib import AsyncExitStack, asynccontextmanager
 
 from langchain_core.tools import BaseTool
+from langchain_mcp_adapters.client import MultiServerMCPClient
 from langchain_mcp_adapters.tools import load_mcp_tools
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -99,6 +101,57 @@ async def build_mcp_tools(
     return tools
 
 
+@asynccontextmanager
+async def open_mcp_tools(session: AsyncSession, user_id: uuid.UUID):
+    """打开该用户所有已启用 MCP server 的「持久会话」并产出工具（上下文管理器）。
+
+    与 build_mcp_tools 的区别：build_mcp_tools 产出的工具每次调用都新建连接+握手；
+    本函数对每个 server 开一条**活着的 ClientSession**（整段 with 期间保持），其工具的
+    每次调用都复用这条会话，不再重复握手——大幅降低多次工具调用的累计延迟。
+
+    用法：
+        async with open_mcp_tools(session, user_id) as mcp_tools:
+            ... 在此期间用 mcp_tools 跑工具编排 ...
+        # 退出时自动关闭所有会话（正常/异常/被取消都会清理，避免连接泄漏）
+
+    单个 server 开会话失败时跳过该 server，不影响其余 server 与内置工具。
+    会话期间工具串行调用（同一会话不并发）。
+    """
+    servers = await MCPServerRepository(session).list_by_user(
+        user_id, enabled_only=True
+    )
+    tools: list[BaseTool] = []
+    seen: set[str] = set()
+    stack = AsyncExitStack()
+    try:
+        for server in servers:
+            try:
+                conn = build_connection(server)
+            except Exception as e:
+                logger.warning("构建 MCP 连接失败（跳过）: %s: %s", server.name, e)
+                continue
+            try:
+                client = MultiServerMCPClient({str(server.id): conn})
+                mcp_session = await stack.enter_async_context(
+                    client.session(str(server.id))
+                )
+                raw = await load_mcp_tools(mcp_session)
+            except Exception as e:
+                logger.warning("打开 MCP 会话失败（跳过）: %s: %s", server.name, e)
+                continue
+            prefix = _sanitize(server.name)
+            for t in raw:
+                _rename(t, prefix, seen)
+                tools.append(t)
+        yield tools
+    finally:
+        # 关闭所有持久会话；清理本身异常只记日志不外抛（避免污染断流/异常路径）
+        try:
+            await stack.aclose()
+        except Exception as e:  # noqa: BLE001
+            logger.warning("关闭 MCP 会话出错（忽略）: %s", e)
+
+
 def invalidate_mcp_cache(user_id: uuid.UUID | str | None = None) -> None:
     """清除 MCP 工具缓存（增删/改 server 或测试连接后调用）。None=全部清。"""
     if user_id is None:
@@ -119,4 +172,4 @@ async def fetch_tools_meta(server: MCPServer) -> list[dict]:
     ]
 
 
-__all__ = ["build_mcp_tools", "fetch_tools_meta", "invalidate_mcp_cache"]
+__all__ = ["build_mcp_tools", "open_mcp_tools", "fetch_tools_meta", "invalidate_mcp_cache"]

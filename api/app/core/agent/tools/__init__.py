@@ -4,6 +4,10 @@
 - builtin/：各内置工具（知识库/记忆/联网/时间），import 时自注册
 - registry：build_enabled_tools（问答用）+ list_tools_for_user（配置页用）
 """
-from app.core.agent.tools.registry import build_enabled_tools, list_tools_for_user
+from app.core.agent.tools.registry import (
+    build_enabled_tools,
+    build_enabled_tools_cm,
+    list_tools_for_user,
+)
 
-__all__ = ["build_enabled_tools", "list_tools_for_user"]
+__all__ = ["build_enabled_tools", "build_enabled_tools_cm", "list_tools_for_user"]

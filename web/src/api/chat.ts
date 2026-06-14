@@ -95,6 +95,14 @@ export interface StreamHandlers {
   onCitation?: (citations: Citation[]) => void
   onDone?: (d: { conversation_id: string; message_id?: string }) => void
   onError?: (message: string) => void
+  // 断线重连续传：补推已生成内容（content 为累积全文，需整体替换当前流式气泡）
+  onResume?: (d: {
+    content: string
+    citations?: Citation[]
+    tool_calls?: ToolCall[]
+  }) => void
+  // 没有进行中的生成（已结束/无）：前端据此结束续传、去重拉历史
+  onIdle?: () => void
 }
 
 export const chatApi = {
@@ -480,6 +488,60 @@ export async function regenerateMessage(
   await streamSSE(`/api/chat/messages/${messageId}/regenerate`, {}, handlers, signal)
 }
 
+// 断线重连续传：订阅某会话「进行中的生成」（GET SSE）。
+// 后端若发现没有进行中的生成会立即返回 idle 并结束。
+export async function subscribeChatEvents(
+  convId: string,
+  handlers: StreamHandlers,
+  signal?: AbortSignal,
+): Promise<void> {
+  const token = localStorage.getItem('access_token')
+  let resp: Response
+  try {
+    resp = await fetch(`/api/chat/${convId}/events`, {
+      method: 'GET',
+      headers: { ...(token ? { Authorization: `Bearer ${token}` } : {}) },
+      signal,
+    })
+  } catch {
+    // 网络错误/主动中断：静默（前端自行处理重连）
+    return
+  }
+  if (!resp.ok || !resp.body) return
+  const reader = resp.body.getReader()
+  const decoder = new TextDecoder()
+  let buffer = ''
+  while (true) {
+    let chunk: ReadableStreamReadResult<Uint8Array>
+    try {
+      chunk = await reader.read()
+    } catch {
+      break
+    }
+    if (chunk.done) break
+    buffer += decoder.decode(chunk.value, { stream: true })
+    const blocks = buffer.split('\n\n')
+    buffer = blocks.pop() ?? ''
+    for (const block of blocks) {
+      const lines = block.split('\n')
+      let event = 'message'
+      let data = ''
+      for (const line of lines) {
+        if (line.startsWith('event:')) event = line.slice(6).trim()
+        else if (line.startsWith('data:')) data += line.slice(5).trim()
+      }
+      if (!data) continue
+      let payload: Record<string, unknown> = {}
+      try {
+        payload = JSON.parse(data)
+      } catch {
+        continue
+      }
+      dispatchEvent(event, payload, handlers)
+    }
+  }
+}
+
 // 通用 SSE POST 解析
 async function streamSSE(
   url: string,
@@ -561,6 +623,12 @@ function dispatchEvent(
       break
     case 'done':
       handlers.onDone?.(payload as never)
+      break
+    case 'resume':
+      handlers.onResume?.(payload as never)
+      break
+    case 'idle':
+      handlers.onIdle?.()
       break
     case 'error':
       handlers.onError?.((payload.message as string) ?? '生成失败')

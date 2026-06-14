@@ -97,6 +97,26 @@ async def chat_stream(
     )
 
 
+@router.get("/chat/{conv_id}/events")
+async def chat_resume_events(
+    conv_id: uuid.UUID,
+    user: User = Depends(get_current_user),
+    session: AsyncSession = Depends(get_session),
+):
+    """断线重连续传：若该会话正有生成在进行，补推已生成内容并续接后续 token；
+    没有进行中的生成则立即返回 idle（前端据此去重拉历史）。"""
+    service = ChatService(session)
+    return StreamingResponse(
+        service.resume_events(user.id, conv_id),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "Connection": "keep-alive",
+            "X-Accel-Buffering": "no",
+        },
+    )
+
+
 @router.post("/chat/upload-image")
 async def upload_chat_image(
     file: UploadFile = File(...),

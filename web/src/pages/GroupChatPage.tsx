@@ -49,6 +49,7 @@ import MarkdownMessage from '@/components/MarkdownMessage'
 import { AuthenticatedImage } from '@/components/AuthenticatedImage'
 import VoiceInputButton from '@/components/VoiceInputButton'
 import { useAuthStore } from '@/stores/authStore'
+import { copyText } from '@/utils/clipboard'
 import { resolveToolMeta } from '@/pages/chat/types'
 import ShareModal from '@/pages/chat/ShareModal'
 
@@ -1390,12 +1391,9 @@ function InviteModal({
   const link = code ? `${window.location.origin}/groups/join/${code}` : ''
 
   const copy = async (text: string) => {
-    try {
-      await navigator.clipboard.writeText(text)
-      antdMessage.success('已复制')
-    } catch {
-      antdMessage.warning('复制失败，请手动复制')
-    }
+    const ok = await copyText(text)
+    if (ok) antdMessage.success('已复制')
+    else antdMessage.warning('复制失败，请长按上方文本手动复制')
   }
 
   const reset = async () => {

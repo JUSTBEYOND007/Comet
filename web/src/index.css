@@ -3814,6 +3814,13 @@ body {
 .gc-conv-del:hover {
   color: #ff5d34;
 }
+/* 手机端无 hover：会话/群聊列表的删除按钮默认常显，方便点删 */
+@media (max-width: 768px) {
+  .chat-conv-del,
+  .gc-conv-del {
+    opacity: 0.6;
+  }
+}
 .gc-main {
   flex: 1;
   display: flex;

@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react'
-import { Button, Card, Col, Empty, Row, Spin, Tag } from 'antd'
+import { Button, Card, Col, Empty, Row, Spin, Tag, Tooltip } from 'antd'
 import {
   ArrowRightOutlined,
   BookOutlined,
@@ -8,8 +8,11 @@ import {
   CustomerServiceOutlined,
   DeploymentUnitOutlined,
   HddOutlined,
+  PictureOutlined,
+  QuestionCircleOutlined,
   RobotOutlined,
   SettingOutlined,
+  SmileOutlined,
 } from '@ant-design/icons'
 import { useNavigate } from 'react-router-dom'
 import ReactECharts from 'echarts-for-react'
@@ -182,7 +185,7 @@ export default function HomePage() {
 
   const emotionTrendOption = {
     tooltip: { trigger: 'axis' },
-    legend: { data: ['效价', '唤醒度'], top: 0 },
+    legend: { data: ['情绪倾向', '情绪强度'], top: 0 },
     grid: { left: 36, right: 16, top: 32, bottom: 28 },
     xAxis: {
       type: 'category',
@@ -191,7 +194,7 @@ export default function HomePage() {
     yAxis: { type: 'value', min: -1, max: 1 },
     series: [
       {
-        name: '效价',
+        name: '情绪倾向',
         type: 'line',
         smooth: true,
         connectNulls: true,
@@ -200,7 +203,7 @@ export default function HomePage() {
         areaStyle: { opacity: 0.1 },
       },
       {
-        name: '唤醒度',
+        name: '情绪强度',
         type: 'line',
         smooth: true,
         connectNulls: true,
@@ -228,6 +231,21 @@ export default function HomePage() {
   const hasEmotion = (emotionProfile?.sample_count ?? 0) > 0
   const allReady = hasChat && hasEmbedding
   const finishedSteps = quickSteps.filter((s) => s.done).length
+
+  // 数据概览 KPI 卡片（情绪指数若有则置顶）
+  const healthIndex = emotionProfile?.health_index ?? 0
+  const healthColor =
+    healthIndex >= 60 ? '#369F21' : healthIndex >= 40 ? '#FF8A34' : '#FF5D34'
+  const kpis = [
+    ...(hasEmotion
+      ? [{ label: '情绪指数', value: healthIndex, icon: <SmileOutlined />, color: healthColor }]
+      : []),
+    { label: '文档', value: c?.documents ?? 0, icon: <BookOutlined />, color: '#369F21' },
+    { label: '图片', value: c?.images ?? 0, icon: <PictureOutlined />, color: '#FF8A34' },
+    { label: '对话', value: c?.conversations ?? 0, icon: <CommentOutlined />, color: '#155EEF' },
+    { label: '记忆实体', value: c?.entities ?? 0, icon: <HddOutlined />, color: '#7C4DFF' },
+    { label: '记忆社区', value: c?.communities ?? 0, icon: <DeploymentUnitOutlined />, color: '#EB2F96' },
+  ]
 
   return (
     <div className="fluid-page">
@@ -357,8 +375,32 @@ export default function HomePage() {
         </Row>
       </Card>
 
-      {/* 图表区 */}
-      <Row gutter={[16, 16]} style={{ marginBottom: 22 }}>
+      {/* 数据概览 */}
+      <div className="dash-section-title">📊 数据概览</div>
+      {loading ? (
+        <div style={{ textAlign: 'center', padding: 40 }}>
+          <Spin />
+        </div>
+      ) : (
+        <div className="dash-kpi-grid">
+          {kpis.map((k) => (
+            <div className="stat-card" key={k.label}>
+              <div className="stat-card__bar" style={{ background: k.color }} />
+              <div
+                className="stat-card__icon"
+                style={{ background: `${k.color}1a`, color: k.color }}
+              >
+                {k.icon}
+              </div>
+              <div className="stat-card__value">{k.value}</div>
+              <div className="stat-card__label">{k.label}</div>
+            </div>
+          ))}
+        </div>
+      )}
+
+      {/* 图表：两行等宽 */}
+      <Row gutter={[16, 16]} style={{ marginTop: 16 }}>
         <Col xs={24} md={12}>
           <Card title="知识库分类分布" style={{ borderRadius: 16 }}>
             {loading ? (
@@ -374,60 +416,42 @@ export default function HomePage() {
         </Col>
         <Col xs={24} md={12}>
           <Card title="近 14 天记忆新增" style={{ borderRadius: 16 }}>
-            <ReactECharts option={lineOption} style={{ height: 280 }} />
+            {memStats?.trend.length ? (
+              <ReactECharts option={lineOption} style={{ height: 280 }} />
+            ) : (
+              <Empty description="暂无记忆数据" />
+            )}
           </Card>
         </Col>
       </Row>
 
-      {/* 情绪画像区 */}
-      <Row gutter={[16, 16]}>
-        <Col xs={24} md={6}>
-          <Card title="情绪健康指数" style={{ borderRadius: 16 }}>
-            {hasEmotion ? (
-              <div style={{ textAlign: 'center' }}>
-                <div
-                  style={{
-                    fontSize: 44,
-                    fontWeight: 700,
-                    color:
-                      (emotionProfile?.health_index ?? 0) >= 60
-                        ? '#369F21'
-                        : (emotionProfile?.health_index ?? 0) >= 40
-                          ? '#FF8A34'
-                          : '#FF5D34',
-                  }}
+      {/* 情绪洞察：两张等宽 */}
+      <Row gutter={[16, 16]} style={{ marginTop: 16 }}>
+        <Col xs={24} md={12}>
+          <Card
+            title={
+              <span>
+                近 14 天情绪趋势
+                <Tooltip
+                  title="情绪倾向：越高越积极开心、越低越消极低落（范围 -1~1）；情绪强度：越高情绪越激动强烈、越低越平静（范围 -1~1）。由 AI 从你的对话中感知。"
                 >
-                  {emotionProfile?.health_index ?? 0}
-                </div>
-                <div style={{ color: '#667085', marginBottom: 12 }}>满分 100</div>
-                <div style={{ fontSize: 15 }}>
-                  当前主导情绪：
-                  <span style={{ fontWeight: 600, color: '#155EEF' }}>
-                    {emotionProfile?.dominant_emotion}
-                  </span>
-                </div>
-                <div style={{ color: '#98A2B3', fontSize: 12, marginTop: 6 }}>
-                  基于最近 {emotionProfile?.sample_count} 条情绪记录
-                </div>
-              </div>
+                  <QuestionCircleOutlined style={{ marginLeft: 6, color: '#98a2b3', fontSize: 13 }} />
+                </Tooltip>
+              </span>
+            }
+            style={{ borderRadius: 16 }}
+          >
+            {hasEmotion ? (
+              <ReactECharts option={emotionTrendOption} style={{ height: 280 }} />
             ) : (
               <Empty description="多聊几句，AI 会感知你的情绪" />
             )}
           </Card>
         </Col>
-        <Col xs={24} md={10}>
-          <Card title="近 14 天情绪趋势" style={{ borderRadius: 16 }}>
-            {hasEmotion ? (
-              <ReactECharts option={emotionTrendOption} style={{ height: 260 }} />
-            ) : (
-              <Empty description="暂无情绪数据" />
-            )}
-          </Card>
-        </Col>
-        <Col xs={24} md={8}>
+        <Col xs={24} md={12}>
           <Card title="近 30 天情绪分布" style={{ borderRadius: 16 }}>
             {emotionDist.length ? (
-              <ReactECharts option={emotionPieOption} style={{ height: 260 }} />
+              <ReactECharts option={emotionPieOption} style={{ height: 280 }} />
             ) : (
               <Empty description="暂无情绪数据" />
             )}

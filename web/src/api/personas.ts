@@ -24,8 +24,10 @@ export interface PersonaPayload {
 }
 
 export const personaApi = {
-  list() {
-    return client.get<unknown, Wrapped<Persona[]>>('/personas')
+  list(all = false) {
+    return client.get<unknown, Wrapped<Persona[]>>('/personas', {
+      params: all ? { all: true } : undefined,
+    })
   },
   create(body: PersonaPayload) {
     return client.post<unknown, Wrapped<Persona>>('/personas', body)

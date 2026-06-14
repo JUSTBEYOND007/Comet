@@ -34,6 +34,8 @@ class Conversation(Base):
     member_persona_ids: Mapped[list | None] = mapped_column(JSONB, nullable=True)
     # 群聊是否允许成员调用工具（知识库/记忆/联网/MCP），全群统一，默认关。
     enable_tools: Mapped[bool] = mapped_column(Boolean, default=False)
+    # 多人实时群聊邀请码（仅 is_group=true 有意义）：他人凭此码加入群聊。
+    join_code: Mapped[str | None] = mapped_column(String(16), nullable=True, index=True)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now()
     )
@@ -57,6 +59,10 @@ class Message(Base):
     content: Mapped[str] = mapped_column(Text)
     # 群聊中该消息由哪个角色卡发出（user 消息为空；单聊 assistant 也为空）。
     sender_persona_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), nullable=True
+    )
+    # 多人实时群聊中该 user 消息由哪个真人发出（单人会话/AI 消息为空）。
+    sender_user_id: Mapped[uuid.UUID | None] = mapped_column(
         UUID(as_uuid=True), nullable=True
     )
     # 附加信息：引用 citations / 工具调用 tool_calls / token usage / 图片等

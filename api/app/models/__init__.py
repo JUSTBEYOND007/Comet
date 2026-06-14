@@ -11,12 +11,14 @@ from app.models.daily_review_model import DailyReview
 from app.models.document_model import Document
 from app.models.emotion_model import EmotionProfile, EmotionRecord
 from app.models.favorite_model import Favorite
+from app.models.group_member_model import GroupMember
 from app.models.image_model import Image
 from app.models.knowledge_base_model import KnowledgeBase
 from app.models.mcp_server_model import MCPServer
 from app.models.memory_model import Memory
 from app.models.message_feedback_model import MessageFeedback
 from app.models.model_config_model import ModelConfig
+from app.models.persona_group_model import PersonaGroup
 from app.models.play_history_model import PlayHistory
 from app.models.skill_model import Skill
 from app.models.song_model import Song
@@ -35,12 +37,14 @@ __all__ = [
     "EmotionProfile",
     "EmotionRecord",
     "Favorite",
+    "GroupMember",
     "Image",
     "KnowledgeBase",
     "MCPServer",
     "Memory",
     "MessageFeedback",
     "ModelConfig",
+    "PersonaGroup",
     "PlayHistory",
     "Skill",
     "Song",

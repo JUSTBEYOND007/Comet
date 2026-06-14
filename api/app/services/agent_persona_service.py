@@ -1,4 +1,8 @@
 """对话人格业务服务：CRUD + 设为当前生效。"""
+# 本类有名为 list 的方法，会遮蔽内置 list，使类体内 `-> list[dict]` 注解报错；
+# 用 future 注解延迟求值规避（与 skill_service 同）。
+from __future__ import annotations
+
 import uuid
 
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -13,7 +17,7 @@ from app.schemas.agent_persona_schema import PersonaCreate, PersonaUpdate
 logger = get_logger(__name__)
 
 # 单用户人格数量上限，防滥用
-MAX_PERSONAS = 100
+MAX_PERSONAS = 200
 
 
 class AgentPersonaService:
@@ -21,8 +25,28 @@ class AgentPersonaService:
         self.session = session
         self.repo = AgentPersonaRepository(session)
 
-    async def list(self, user_id: uuid.UUID) -> list[AgentPersona]:
-        return await self.repo.list_by_user(user_id)
+    async def list(
+        self, user_id: uuid.UUID, include_group_only: bool = False
+    ) -> list[AgentPersona]:
+        items = await self.repo.list_by_user(user_id)
+        # 角色列表为空：懒创建一个开箱即用的默认角色（覆盖新/存量用户，无需回填）
+        if not items:
+            from app.services.persona_scenario_builtins import DEFAULT_PERSONA
+
+            default = AgentPersona(
+                user_id=user_id,
+                name=DEFAULT_PERSONA["name"],
+                system_prompt=DEFAULT_PERSONA["system_prompt"],
+                temperature=DEFAULT_PERSONA["temperature"],
+                is_active=True,
+            )
+            await self.repo.add(default)
+            items = await self.repo.list_by_user(user_id)
+        # 默认只返回「单个角色」（隐藏仅作为卡组成员的角色，保持列表干净）；
+        # include_group_only=True 时返回全部（群聊页解析成员头像用）
+        if not include_group_only:
+            items = [p for p in items if not p.in_group_only]
+        return items
 
     async def _get_or_404(
         self, user_id: uuid.UUID, persona_id: uuid.UUID

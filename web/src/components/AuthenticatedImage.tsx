@@ -5,7 +5,13 @@ import type { ImageProps } from 'antd'
 type ImgProps = React.ImgHTMLAttributes<HTMLImageElement>
 
 function shouldFetchWithAuth(src?: string) {
-  return !!src && src.startsWith('/api/files/')
+  if (!src) return false
+  // 本地存储文件，以及群成员头像接口（/api/groups/{id}/members/{uid}/avatar），
+  // 都需要带 Authorization 头才能取到，故用 fetch + blob 方式加载。
+  return (
+    src.startsWith('/api/files/') ||
+    (src.startsWith('/api/groups/') && src.endsWith('/avatar'))
+  )
 }
 
 // ── 模块级 blob URL 缓存（带引用计数）──

@@ -24,6 +24,7 @@ from app.controllers import (
     memory_controller,
     model_config_controller,
     music_controller,
+    persona_group_controller,
     search_controller,
     skill_controller,
     tag_controller,
@@ -44,6 +45,7 @@ api_router.include_router(chat_controller.router)
 api_router.include_router(group_chat_controller.router)
 api_router.include_router(agent_config_controller.router)
 api_router.include_router(agent_persona_controller.router)
+api_router.include_router(persona_group_controller.router)
 api_router.include_router(mcp_controller.router)
 api_router.include_router(tool_controller.router)
 api_router.include_router(search_controller.router)

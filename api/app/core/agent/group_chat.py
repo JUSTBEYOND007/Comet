@@ -59,7 +59,9 @@ async def decide_speakers(
 ) -> list[str]:
     """主持人 LLM 决定本轮发言顺序，返回角色名列表。
 
-    失败兜底：返回全体成员（按定义顺序），保证对话不中断。
+    - 返回非空列表：这些角色按序发言。
+    - 返回空列表：本轮 AI 不接话（如真人之间在互相聊天，无需 AI 插嘴）。
+    - 解析失败/异常：兜底返回全体成员，保证对话不中断。
     members 元素：{id, name, system_prompt}。
     """
     member_names = [m["name"] for m in members]
@@ -79,16 +81,18 @@ async def decide_speakers(
         resp = await host_model.ainvoke([HumanMessage(content=prompt)])
         content = resp.content if isinstance(resp.content, str) else str(resp.content)
         data = parse_json_object(content)
-        speakers = data.get("speakers") or []
-        # 过滤非法名字、去重保序
+        speakers = data.get("speakers")
+        # 字段缺失（解析失败）→ 兜底全员，保证对话不中断
+        if speakers is None:
+            return member_names
+        # 过滤非法名字、去重保序；显式空列表表示「本轮 AI 不接话」，直接返回空
         valid: list[str] = []
         seen: set[str] = set()
         for name in speakers:
             if name in member_names and name not in seen:
                 valid.append(name)
                 seen.add(name)
-        if valid:
-            return valid
+        return valid
     except Exception as e:
         logger.warning("群聊主持人调度失败，回退全员发言: %s", e)
     return member_names

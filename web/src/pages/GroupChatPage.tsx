@@ -4,9 +4,11 @@ import {
   Button,
   Checkbox,
   Drawer,
+  Dropdown,
   Empty,
   Input,
   Modal,
+  Space,
   Spin,
   Switch,
   Tag,
@@ -19,19 +21,27 @@ import {
   ArrowUpOutlined,
   CloseCircleFilled,
   DeleteOutlined,
+  ExclamationCircleFilled,
+  FormOutlined,
+  LogoutOutlined,
   MenuOutlined,
+  MoreOutlined,
   PictureOutlined,
   PlusOutlined,
   SendOutlined,
   ShareAltOutlined,
   TeamOutlined,
+  UsergroupAddOutlined,
   UserOutlined,
 } from '@ant-design/icons'
+import { useSearchParams } from 'react-router-dom'
 import {
   chatApi,
   groupApi,
-  streamGroupChat,
+  subscribeGroupEvents,
   type Conversation,
+  type GroupConversation,
+  type GroupHuman,
   type GroupMember,
 } from '@/api/chat'
 import { personaApi, type Persona } from '@/api/personas'
@@ -54,9 +64,42 @@ interface GroupUiMessage {
   content: string
   senderPersonaId?: string | null
   senderName?: string | null
+  // 多人实时群聊：真人发送者
+  senderUserId?: string | null
+  isMe?: boolean
   toolRuns?: GroupToolRun[]
   images?: string[]
   streaming?: boolean
+}
+
+// 把后端群聊历史消息转成页面消息模型（openConversation 与重连 resync 复用）
+type RawGroupMsg = {
+  id: string
+  role: string
+  content: string
+  sender_persona_id?: string | null
+  sender_name?: string | null
+  sender_user_id?: string | null
+  is_me?: boolean
+  images?: string[]
+  meta_data?: { tool_calls?: { tool: string; query?: string }[] } | null
+}
+function toUiMessage(m: RawGroupMsg): GroupUiMessage {
+  return {
+    id: m.id,
+    role: m.role as 'user' | 'assistant',
+    content: m.content,
+    senderPersonaId: m.sender_persona_id,
+    senderName: m.sender_name,
+    senderUserId: m.sender_user_id,
+    isMe: m.is_me,
+    images: m.images,
+    toolRuns: m.meta_data?.tool_calls?.map((t) => ({
+      tool: t.tool,
+      query: t.query,
+      status: 'success',
+    })),
+  }
 }
 
 function useIsMobile() {
@@ -124,13 +167,67 @@ function PersonaAvatar({
   )
 }
 
+// 群头像：仿微信群宫格合成。取前 1~4 个成员头像拼成方块；
+// 成员没头像则用名字首字 + 主题色块补位。纯前端、不落库、成员变动自动跟随。
+function GroupAvatar({
+  members,
+  size = 40,
+}: {
+  members: { name: string; avatar_url?: string | null }[]
+  size?: number
+}) {
+  const list = members.slice(0, 4)
+  if (list.length === 0) {
+    return (
+      <div
+        className="gc-group-avatar gc-group-avatar--empty"
+        style={{ width: size, height: size }}
+      >
+        <TeamOutlined />
+      </div>
+    )
+  }
+  // 单成员直接铺满
+  if (list.length === 1) {
+    return <PersonaAvatar name={list[0].name} avatarUrl={list[0].avatar_url} size={size} />
+  }
+  return (
+    <div
+      className={`gc-group-avatar gc-group-avatar--${list.length}`}
+      style={{ width: size, height: size }}
+    >
+      {list.map((m, i) => (
+        <div className="gc-group-avatar-cell" key={i}>
+          {m.avatar_url ? (
+            <AuthenticatedImage
+              src={m.avatar_url}
+              alt={m.name}
+              style={{ width: '100%', height: '100%', objectFit: 'cover' }}
+            />
+          ) : (
+            <span
+              className="gc-group-avatar-letter"
+              style={{ background: colorFor(m.name) }}
+            >
+              {m.name.slice(0, 1)}
+            </span>
+          )}
+        </div>
+      ))}
+    </div>
+  )
+}
+
 export default function GroupChatPage() {
   const isMobile = useIsMobile()
   const user = useAuthStore((s) => s.user)
-  const [conversations, setConversations] = useState<Conversation[]>([])
+  const [searchParams, setSearchParams] = useSearchParams()
+  const [conversations, setConversations] = useState<GroupConversation[]>([])
+  const [allPersonas, setAllPersonas] = useState<Persona[]>([])
   const [activeId, setActiveId] = useState<string | null>(null)
   const [messages, setMessages] = useState<GroupUiMessage[]>([])
   const [members, setMembers] = useState<GroupMember[]>([])
+  const [humans, setHumans] = useState<GroupHuman[]>([])
   const [input, setInput] = useState('')
   const [sending, setSending] = useState(false)
   const [pendingImages, setPendingImages] = useState<{ key: string; url: string }[]>(
@@ -138,11 +235,20 @@ export default function GroupChatPage() {
   )
   const [uploading, setUploading] = useState(false)
   const [loadingMsgs, setLoadingMsgs] = useState(false)
+  const [thinking, setThinking] = useState(false)
   const [listOpen, setListOpen] = useState(false)
   const [createOpen, setCreateOpen] = useState(false)
+  const [joinOpen, setJoinOpen] = useState(false)
   const [shareOpen, setShareOpen] = useState(false)
+  const [inviteOpen, setInviteOpen] = useState(false)
   const scrollRef = useRef<HTMLDivElement>(null)
   const inputRef = useRef<InputRef>(null)
+  // 实时订阅控制：切换会话/卸载时 abort 旧连接
+  const subRef = useRef<AbortController | null>(null)
+  // 当前正在流式输出的 AI 气泡临时 id（speaker_start 设、speaker_end 清）
+  const streamingRef = useRef<string | null>(null)
+  // 已渲染过的真人消息 id 集合（say 乐观插入与 SSE 回声去重）
+  const seenHumanRef = useRef<Set<string>>(new Set())
 
   // @ 提及下拉：是否显示 + 过滤关键字 + 高亮项
   const [mentionOpen, setMentionOpen] = useState(false)
@@ -154,55 +260,261 @@ export default function GroupChatPage() {
     [members],
   )
 
+  // 真人成员头像/昵称映射（user_id -> {nickname, avatar_url}），渲染他人发言用
+  const humanMap = useMemo(
+    () => new Map(humans.map((h) => [h.user_id, h])),
+    [humans],
+  )
+
   const mentionCandidates = useMemo(() => {
     const kw = mentionKeyword.toLowerCase()
     return members.filter((m) => !kw || m.name.toLowerCase().includes(kw))
   }, [members, mentionKeyword])
 
   const loadConversations = async () => {
-    const all = await chatApi.listConversations()
-    const groups = (all.data as (Conversation & { is_group?: boolean })[]).filter(
-      (c) => c.is_group,
-    )
-    setConversations(groups)
-    return groups
+    const resp = await groupApi.listGroups()
+    setConversations(resp.data)
+    return resp.data
   }
 
   useEffect(() => {
     loadConversations()
+    personaApi
+      .list(true)
+      .then((r) => setAllPersonas(r.data))
+      .catch(() => {})
+    // 卸载时断开实时订阅
+    return () => {
+      subRef.current?.abort()
+    }
   }, [])
+
+  // 支持 ?conv=xxx 深链直接打开（如加入群聊后跳转）
+  useEffect(() => {
+    const cid = searchParams.get('conv')
+    if (cid && cid !== activeId) {
+      openConversation(cid)
+      searchParams.delete('conv')
+      setSearchParams(searchParams, { replace: true })
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [searchParams])
+
+  // persona id -> {name, avatar_url}，用于群头像宫格合成
+  const personaMap = useMemo(
+    () => new Map(allPersonas.map((p) => [p.id, p])),
+    [allPersonas],
+  )
+
+  // 取某群聊的成员列表（用于宫格头像）：优先 member_persona_ids 顺序
+  const membersForConv = (c: Conversation) => {
+    const ids = ((c as Conversation & { member_persona_ids?: string[] })
+      .member_persona_ids || []) as string[]
+    return ids
+      .map((id) => personaMap.get(id))
+      .filter((p): p is Persona => !!p)
+      .map((p) => ({ name: p.name, avatar_url: p.avatar_url }))
+  }
 
   useEffect(() => {
     const el = scrollRef.current
     if (el) el.scrollTop = el.scrollHeight
-  }, [messages])
+  }, [messages, thinking])
 
   const openConversation = async (id: string) => {
+    // 断开旧订阅
+    subRef.current?.abort()
+    streamingRef.current = null
+    seenHumanRef.current = new Set()
+    setThinking(false)
     setActiveId(id)
     setListOpen(false)
     setLoadingMsgs(true)
     try {
-      const [msgsResp, membersResp] = await Promise.all([
-        chatApi.listMessages(id),
+      const [msgsResp, membersResp, humansResp] = await Promise.all([
+        groupApi.listGroupMessages(id),
         groupApi.listMembers(id),
+        groupApi.listHumans(id).catch(() => ({ data: [] as GroupHuman[] })),
       ])
       setMembers(membersResp.data)
-      setMessages(
-        msgsResp.data.map((m) => ({
-          id: m.id,
-          role: m.role as 'user' | 'assistant',
-          content: m.content,
-          senderPersonaId: (m as { sender_persona_id?: string }).sender_persona_id,
-          senderName: (m as { sender_name?: string }).sender_name,
-          images: (m as { images?: string[] }).images,
-          toolRuns: (m.meta_data?.tool_calls as GroupToolRun[] | undefined)?.map(
-            (t) => ({ tool: t.tool, query: t.query, status: 'success' }),
-          ),
-        })),
-      )
+      setHumans(humansResp.data)
+      msgsResp.data.forEach((m) => {
+        const su = (m as { sender_user_id?: string }).sender_user_id
+        if (m.role === 'user' && su) seenHumanRef.current.add(m.id)
+      })
+      setMessages(msgsResp.data.map((m) => toUiMessage(m as RawGroupMsg)))
+      startSubscription(id)
     } finally {
       setLoadingMsgs(false)
     }
+  }
+
+  // ── 实时订阅：接收全员发言与 AI 接话事件（带断线自动重连）──
+  const startSubscription = (id: string) => {
+    const ctrl = new AbortController()
+    subRef.current = ctrl
+    let attempt = 0
+    let connectedOnce = false
+
+    // 重连后补齐断线期间可能漏掉的消息与成员状态
+    const resync = async () => {
+      try {
+        const [m, h] = await Promise.all([
+          groupApi.listGroupMessages(id),
+          groupApi.listHumans(id).catch(() => ({ data: [] as GroupHuman[] })),
+        ])
+        seenHumanRef.current = new Set()
+        m.data.forEach((x) => {
+          const su = (x as { sender_user_id?: string }).sender_user_id
+          if (x.role === 'user' && su) seenHumanRef.current.add(x.id)
+        })
+        setMessages(m.data.map((x) => toUiMessage(x as RawGroupMsg)))
+        setHumans(h.data)
+        streamingRef.current = null
+        setThinking(false)
+      } catch {
+        /* 补齐失败忽略，下条消息照常追加 */
+      }
+    }
+
+    const refreshHumans = () => {
+      groupApi
+        .listHumans(id)
+        .then((r) => setHumans(r.data))
+        .catch(() => {})
+    }
+
+    // 定期刷新在线状态：兜底处理「网络硬断、对端没来得及广播离线」的情况
+    const onlineTimer = setInterval(refreshHumans, 30000)
+    ctrl.signal.addEventListener('abort', () => clearInterval(onlineTimer))
+
+    const handlers = {
+      onReady: () => {
+        attempt = 0
+        if (connectedOnce) resync() // 这是一次重连，补齐数据
+        connectedOnce = true
+        // 自己 SSE 已连上、服务端已标记在线，刷新一次在线状态（首连也刷）
+        refreshHumans()
+      },
+      onThinking: () => setThinking(true),
+      onPresence: (d: { type: string; nickname?: string }) => {
+        if (d.type === 'join' || d.type === 'leave') {
+          antdMessage.info(
+            `${d.nickname} ${d.type === 'join' ? '加入了群聊' : '退出了群聊'}`,
+          )
+        }
+        refreshHumans()
+      },
+      onHumanMessage: (d: {
+        message_id: string
+        user_id: string
+        nickname: string
+        content: string
+      }) => {
+        if (seenHumanRef.current.has(d.message_id)) return
+        seenHumanRef.current.add(d.message_id)
+        setMessages((prev) => [
+          ...prev,
+          {
+            id: d.message_id,
+            role: 'user' as const,
+            content: d.content,
+            senderUserId: d.user_id,
+            senderName: d.nickname,
+            isMe: d.user_id === user?.id,
+          },
+        ])
+      },
+      onSpeakerStart: (d: { persona_id: string; name: string }) => {
+        setThinking(false)
+        const tempId = `s-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`
+        streamingRef.current = tempId
+        setMessages((prev) => [
+          ...prev,
+          {
+            id: tempId,
+            role: 'assistant' as const,
+            content: '',
+            senderPersonaId: d.persona_id,
+            senderName: d.name,
+            streaming: true,
+          },
+        ])
+      },
+      onToken: (d: { text: string }) => {
+        const cur = streamingRef.current
+        if (!cur) return
+        setMessages((prev) =>
+          prev.map((m) => (m.id === cur ? { ...m, content: m.content + d.text } : m)),
+        )
+      },
+      onToolStart: (d: { tool: string; query: string }) => {
+        const cur = streamingRef.current
+        if (!cur) return
+        setMessages((prev) =>
+          prev.map((m) =>
+            m.id === cur
+              ? {
+                  ...m,
+                  toolRuns: [
+                    ...(m.toolRuns || []),
+                    { tool: d.tool, query: d.query, status: 'running' },
+                  ],
+                }
+              : m,
+          ),
+        )
+      },
+      onToolResult: (d: { tool: string; status?: string }) => {
+        const cur = streamingRef.current
+        if (!cur) return
+        setMessages((prev) =>
+          prev.map((m) => {
+            if (m.id !== cur) return m
+            const runs = [...(m.toolRuns || [])]
+            for (let i = runs.length - 1; i >= 0; i -= 1) {
+              if (runs[i].tool === d.tool && runs[i].status === 'running') {
+                runs[i] = { ...runs[i], status: d.status || 'success' }
+                break
+              }
+            }
+            return { ...m, toolRuns: runs }
+          }),
+        )
+      },
+      onSpeakerEnd: (d: { message_id: string }) => {
+        const cur = streamingRef.current
+        setMessages((prev) =>
+          prev.map((m) =>
+            m.id === cur ? { ...m, id: d.message_id, streaming: false } : m,
+          ),
+        )
+        streamingRef.current = null
+      },
+      onDone: () => setThinking(false),
+      onError: (msg: string) => {
+        setThinking(false)
+        antdMessage.error(msg)
+      },
+    }
+
+    const scheduleReconnect = () => {
+      attempt += 1
+      const delay = Math.min(1000 * 2 ** attempt, 15000)
+      setTimeout(() => {
+        if (!ctrl.signal.aborted) connect()
+      }, delay)
+    }
+    const connect = () => {
+      subscribeGroupEvents(id, handlers, ctrl.signal)
+        .then(() => {
+          if (!ctrl.signal.aborted) scheduleReconnect()
+        })
+        .catch(() => {
+          if (!ctrl.signal.aborted) scheduleReconnect()
+        })
+    }
+    connect()
   }
 
   // ── @ 提及处理 ──
@@ -271,95 +583,17 @@ export default function GroupChatPage() {
     setSending(true)
     const imgs = pendingImages
     setPendingImages([])
-    // 先放用户消息（带图）
-    setMessages((prev) => [
-      ...prev,
-      {
-        id: `u-${Date.now()}`,
-        role: 'user',
-        content: text,
-        images: imgs.map((i) => i.url),
-      },
-    ])
-
-    let currentId: string | null = null
+    // 本人消息也通过 SSE 回声统一渲染（避免乐观插入与回声重复）
     try {
-      await streamGroupChat(
+      await groupApi.say(
         activeId,
         text || '（看图）',
-        {
-        onSpeakerStart: (d) => {
-          currentId = `s-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`
-          setMessages((prev) => [
-            ...prev,
-            {
-              id: currentId as string,
-              role: 'assistant',
-              content: '',
-              senderPersonaId: d.persona_id,
-              senderName: d.name,
-              streaming: true,
-            },
-          ])
-        },
-        onToken: (t) => {
-          setMessages((prev) =>
-            prev.map((m) =>
-              m.id === currentId ? { ...m, content: m.content + t } : m,
-            ),
-          )
-        },
-        onToolStart: (d) => {
-          setMessages((prev) =>
-            prev.map((m) =>
-              m.id === currentId
-                ? {
-                    ...m,
-                    toolRuns: [
-                      ...(m.toolRuns || []),
-                      { tool: d.tool, query: d.query, status: 'running' },
-                    ],
-                  }
-                : m,
-            ),
-          )
-        },
-        onToolResult: (d) => {
-          setMessages((prev) =>
-            prev.map((m) => {
-              if (m.id !== currentId) return m
-              const runs = [...(m.toolRuns || [])]
-              // 回填最近一条同名 running
-              for (let i = runs.length - 1; i >= 0; i -= 1) {
-                if (runs[i].tool === d.tool && runs[i].status === 'running') {
-                  runs[i] = { ...runs[i], status: d.status || 'success' }
-                  break
-                }
-              }
-              return { ...m, toolRuns: runs }
-            }),
-          )
-        },
-        onSpeakerEnd: (d) => {
-          setMessages((prev) =>
-            prev.map((m) =>
-              m.id === currentId
-                ? { ...m, id: d.message_id, streaming: false }
-                : m,
-            ),
-          )
-          currentId = null
-        },
-        onError: (msg) => {
-          antdMessage.error(msg)
-        },
-      },
-        undefined,
         imgs.map((i) => i.key),
       )
       loadConversations()
     } catch {
       antdMessage.error('群聊发送失败')
+      setInput(text)
     } finally {
       setSending(false)
     }
@@ -403,7 +637,77 @@ export default function GroupChatPage() {
     openConversation(conv.id)
   }
 
+  // 开新对话：复用当前群成员组合 + 工具开关，新建一个空会话。
+  // 标题用原群名传入，后端会自动去重加「（N）」编号区分。
+  const handleNewSession = async () => {
+    if (!activeConv) return
+    const memberIds = (activeConv.member_persona_ids as string[]) || members.map((m) => m.id)
+    if (memberIds.length < 2) {
+      antdMessage.warning('当前群聊成员信息缺失，无法快速开新对话')
+      return
+    }
+    const baseTitle = (activeConv.title || '群聊').replace(/（\d+）$/, '').trim()
+    try {
+      const resp = await groupApi.createGroup(memberIds, baseTitle, !!activeConv.enable_tools)
+      await loadConversations()
+      openConversation(resp.data.id)
+      antdMessage.success('已开启新对话')
+    } catch {
+      antdMessage.error('开新对话失败')
+    }
+  }
+
+  // 清空当前群聊的消息（保留群和成员）
+  const handleClearMessages = () => {
+    if (!activeId) return
+    Modal.confirm({
+      title: '清空当前群聊消息？',
+      icon: <ExclamationCircleFilled style={{ color: '#FF5D34' }} />,
+      content: '该群聊的所有对话记录将被清空，角色组合保留，此操作无法恢复。',
+      okText: '清空',
+      okButtonProps: { danger: true },
+      cancelText: '取消',
+      onOk: async () => {
+        try {
+          await groupApi.clearMessages(activeId)
+          setMessages([])
+          loadConversations()
+          antdMessage.success('消息已清空')
+        } catch {
+          antdMessage.error('清空失败')
+        }
+      },
+    })
+  }
+
   const activeConv = conversations.find((c) => c.id === activeId)
+
+  // 退出群聊（非群主）
+  const handleLeave = () => {
+    if (!activeId) return
+    Modal.confirm({
+      title: '退出该群聊？',
+      icon: <ExclamationCircleFilled style={{ color: '#FF5D34' }} />,
+      content: '退出后将不再接收该群聊消息，可凭邀请码重新加入。',
+      okText: '退出',
+      okButtonProps: { danger: true },
+      cancelText: '取消',
+      onOk: async () => {
+        try {
+          await groupApi.leave(activeId)
+          subRef.current?.abort()
+          setActiveId(null)
+          setMessages([])
+          setMembers([])
+          setHumans([])
+          loadConversations()
+          antdMessage.success('已退出群聊')
+        } catch {
+          antdMessage.error('退出失败')
+        }
+      },
+    })
+  }
 
   // ── 会话列表（侧栏内容） ──
   const listContent = (
@@ -417,6 +721,14 @@ export default function GroupChatPage() {
         className="gc-new-btn"
       >
         新建群聊
+      </Button>
+      <Button
+        icon={<UsergroupAddOutlined />}
+        block
+        onClick={() => setJoinOpen(true)}
+        style={{ marginTop: 4, marginBottom: 18 }}
+      >
+        输入邀请码加入
       </Button>
       {conversations.length === 0 ? (
         <Empty
@@ -433,16 +745,23 @@ export default function GroupChatPage() {
               onClick={() => openConversation(c.id)}
             >
               <div className="gc-conv-icon">
-                <TeamOutlined />
+                <GroupAvatar members={membersForConv(c)} size={40} />
               </div>
               <span className="gc-conv-title">{c.title}</span>
-              <DeleteOutlined
-                className="gc-conv-del"
-                onClick={(e) => {
-                  e.stopPropagation()
-                  handleDelete(c.id)
-                }}
-              />
+              {c.is_owner === false && (
+                <Tag bordered={false} color="green" style={{ marginRight: 4 }}>
+                  已加入
+                </Tag>
+              )}
+              {c.is_owner !== false && (
+                <DeleteOutlined
+                  className="gc-conv-del"
+                  onClick={(e) => {
+                    e.stopPropagation()
+                    handleDelete(c.id)
+                  }}
+                />
+              )}
             </div>
           ))}
         </div>
@@ -466,6 +785,11 @@ export default function GroupChatPage() {
       )}
 
       <div className="gc-main">
+        {isMobile && !activeId ? (
+          /* 手机端未选中会话：直接铺已有群聊列表（新建按钮在列表顶部） */
+          <div className="gc-mobile-list">{listContent}</div>
+        ) : (
+        <>
         {/* 顶栏 */}
         <div className="gc-header">
           {isMobile && (
@@ -478,15 +802,23 @@ export default function GroupChatPage() {
           {activeId ? (
             <div className="gc-header-info">
               <div className="gc-header-title-row">
+                <GroupAvatar members={members} size={32} />
                 <span className="gc-header-title">{activeConv?.title || '群聊'}</span>
-                <Tag bordered={false} className="gc-member-count">
-                  {members.length} 位成员
-                </Tag>
-                {activeConv?.enable_tools && (
-                  <Tag bordered={false} color="blue">
-                    🛠 工具已开启
+                {humans.length > 1 && (
+                  <Tag bordered={false} color="green" className="gc-online-tag">
+                    👥 {humans.filter((h) => h.online).length}/{humans.length} 在线
                   </Tag>
                 )}
+                <span className="gc-header-tags">
+                  <Tag bordered={false} className="gc-member-count">
+                    {members.length} 位成员
+                  </Tag>
+                  {activeConv?.enable_tools && (
+                    <Tag bordered={false} color="blue">
+                      🛠 工具已开启
+                    </Tag>
+                  )}
+                </span>
               </div>
               <div className="gc-header-members">
                 {members.map((m) => (
@@ -507,14 +839,69 @@ export default function GroupChatPage() {
             <span className="gc-header-title">群聊</span>
           )}
           {activeId && (
-            <Button
-              type="text"
-              icon={<ShareAltOutlined />}
-              className="gc-share-btn"
-              onClick={() => setShareOpen(true)}
-            >
-              {isMobile ? '' : '分享'}
-            </Button>
+            <div className="gc-header-actions">
+              <Button
+                type="text"
+                icon={<UsergroupAddOutlined />}
+                className="gc-share-btn"
+                onClick={() => setInviteOpen(true)}
+                title="邀请好友加入群聊一起聊"
+              >
+                {isMobile ? '' : '邀请'}
+              </Button>
+              {activeConv?.is_owner && (
+                <Button
+                  type="text"
+                  icon={<FormOutlined />}
+                  className="gc-share-btn"
+                  onClick={handleNewSession}
+                  title="复用当前角色组合，开启一个全新的空对话"
+                >
+                  {isMobile ? '' : '开新对话'}
+                </Button>
+              )}
+              {activeConv?.is_owner && (
+                <Button
+                  type="text"
+                  icon={<ShareAltOutlined />}
+                  className="gc-share-btn"
+                  onClick={() => setShareOpen(true)}
+                >
+                  {isMobile ? '' : '分享'}
+                </Button>
+              )}
+              <Dropdown
+                trigger={['click']}
+                menu={{
+                  items: [
+                    ...(activeConv?.is_owner
+                      ? [
+                          {
+                            key: 'clear',
+                            icon: <DeleteOutlined />,
+                            danger: true,
+                            label: '清空消息',
+                            onClick: handleClearMessages,
+                          },
+                        ]
+                      : []),
+                    ...(activeConv && !activeConv.is_owner
+                      ? [
+                          {
+                            key: 'leave',
+                            icon: <LogoutOutlined />,
+                            danger: true,
+                            label: '退出群聊',
+                            onClick: handleLeave,
+                          },
+                        ]
+                      : []),
+                  ],
+                }}
+              >
+                <Button type="text" icon={<MoreOutlined />} className="gc-share-btn" />
+              </Dropdown>
+            </div>
           )}
         </div>
 
@@ -530,13 +917,15 @@ export default function GroupChatPage() {
               <p className="gc-placeholder-desc">
                 选择或新建一个群聊，让多个角色一起聊天、互相接话
               </p>
-              <Button
-                type="primary"
-                icon={<PlusOutlined />}
-                onClick={() => setCreateOpen(true)}
-              >
-                新建群聊
-              </Button>
+              <Space direction="vertical" size={10} style={{ alignItems: 'center' }}>
+                <Button
+                  type="primary"
+                  icon={<PlusOutlined />}
+                  onClick={() => setCreateOpen(true)}
+                >
+                  新建群聊
+                </Button>
+              </Space>
             </div>
           ) : loadingMsgs ? (
             <div style={{ textAlign: 'center', marginTop: 60 }}>
@@ -556,6 +945,39 @@ export default function GroupChatPage() {
           ) : (
             messages.map((m) => {
               if (m.role === 'user') {
+                // 其他真人成员的发言：靠左显示昵称 + 彩色头像
+                if (m.isMe === false && m.senderUserId) {
+                  const human = humanMap.get(m.senderUserId)
+                  const nick = human?.nickname || m.senderName || '成员'
+                  return (
+                    <div key={m.id} className="gc-row gc-row--ai">
+                      <PersonaAvatar
+                        name={nick}
+                        avatarUrl={human?.avatar_url}
+                        size={38}
+                        icon={<UserOutlined />}
+                      />
+                      <div className="gc-ai-block">
+                        <div className="gc-sender-name">{nick}</div>
+                        {m.images && m.images.length > 0 && (
+                          <div className="gc-msg-images">
+                            {m.images.map((url, i) => (
+                              <AuthenticatedImage
+                                key={i}
+                                src={url}
+                                alt=""
+                                className="gc-msg-image"
+                              />
+                            ))}
+                          </div>
+                        )}
+                        {m.content && (
+                          <div className="gc-bubble gc-bubble--peer">{m.content}</div>
+                        )}
+                      </div>
+                    </div>
+                  )
+                }
                 return (
                   <div key={m.id} className="gc-row gc-row--user">
                     <div className="gc-user-block">
@@ -625,6 +1047,18 @@ export default function GroupChatPage() {
               )
             })
           )}
+          {thinking && (
+            <div className="gc-row gc-row--ai gc-thinking-row">
+              <div className="gc-thinking">
+                <span className="gc-typing">
+                  <i />
+                  <i />
+                  <i />
+                </span>
+                <span className="gc-thinking-text">AI 正在想怎么接话…</span>
+              </div>
+            </div>
+          )}
           </div>
         </div>
 
@@ -693,7 +1127,7 @@ export default function GroupChatPage() {
                   ref={inputRef}
                   value={input}
                   onChange={(e) => handleInputChange(e.target.value)}
-                  placeholder="说点什么…（@ 指定成员）"
+                  placeholder="说点什么…"
                   autoSize={{ minRows: 1, maxRows: 4 }}
                   variant="borderless"
                   className="gc-textarea"
@@ -767,6 +1201,8 @@ export default function GroupChatPage() {
             </div>
           </div>
         )}
+        </>
+        )}
       </div>
 
       <CreateGroupModal
@@ -774,10 +1210,26 @@ export default function GroupChatPage() {
         onClose={() => setCreateOpen(false)}
         onCreated={onGroupCreated}
       />
+      <JoinByCodeModal
+        open={joinOpen}
+        onClose={() => setJoinOpen(false)}
+        onJoined={async (conv) => {
+          setJoinOpen(false)
+          await loadConversations()
+          openConversation(conv.id)
+        }}
+      />
       <ShareModal
         open={shareOpen}
         conversationId={activeId ?? undefined}
         onClose={() => setShareOpen(false)}
+      />
+      <InviteModal
+        open={inviteOpen}
+        conversationId={activeId ?? undefined}
+        isOwner={!!activeConv?.is_owner}
+        humans={humans}
+        onClose={() => setInviteOpen(false)}
       />
     </div>
   )
@@ -904,6 +1356,180 @@ function CreateGroupModal({
           })}
         </div>
       )}
+    </Modal>
+  )
+}
+
+// ── 邀请弹窗：群主生成/复制邀请链接、重置邀请码；展示在群真人成员 ──
+function InviteModal({
+  open,
+  conversationId,
+  isOwner,
+  humans,
+  onClose,
+}: {
+  open: boolean
+  conversationId?: string
+  isOwner: boolean
+  humans: GroupHuman[]
+  onClose: () => void
+}) {
+  const [code, setCode] = useState('')
+  const [loading, setLoading] = useState(false)
+
+  useEffect(() => {
+    if (!open || !conversationId || !isOwner) return
+    setLoading(true)
+    groupApi
+      .getInvite(conversationId)
+      .then((r) => setCode(r.data.join_code))
+      .catch(() => antdMessage.error('获取邀请码失败'))
+      .finally(() => setLoading(false))
+  }, [open, conversationId, isOwner])
+
+  const link = code ? `${window.location.origin}/groups/join/${code}` : ''
+
+  const copy = async (text: string) => {
+    try {
+      await navigator.clipboard.writeText(text)
+      antdMessage.success('已复制')
+    } catch {
+      antdMessage.warning('复制失败，请手动复制')
+    }
+  }
+
+  const reset = async () => {
+    if (!conversationId) return
+    setLoading(true)
+    try {
+      const r = await groupApi.resetInvite(conversationId)
+      setCode(r.data.join_code)
+      antdMessage.success('邀请码已重置，旧链接失效')
+    } catch {
+      antdMessage.error('重置失败')
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  return (
+    <Modal
+      title="邀请好友加入群聊"
+      open={open}
+      onCancel={onClose}
+      footer={null}
+      width={460}
+    >
+      {isOwner ? (
+        <Spin spinning={loading}>
+          <p style={{ color: '#667085', marginTop: 0, lineHeight: 1.7 }}>
+            把链接发给好友（需注册并登录），即可加入这个群聊，和你及群里的 AI 角色一起实时开聊。
+          </p>
+          <div className="gc-invite-row">
+            <Input value={link} readOnly />
+            <Button type="primary" onClick={() => copy(link)} disabled={!link}>
+              复制链接
+            </Button>
+          </div>
+          <div className="gc-invite-row" style={{ marginTop: 10 }}>
+            <Input value={code} readOnly addonBefore="邀请码" />
+            <Button onClick={() => copy(code)} disabled={!code}>
+              复制码
+            </Button>
+          </div>
+          <Button type="link" danger onClick={reset} style={{ paddingLeft: 0 }}>
+            重置邀请码（旧链接将失效）
+          </Button>
+        </Spin>
+      ) : (
+        <p style={{ color: '#667085', marginTop: 0 }}>
+          只有群主可以生成邀请链接。
+        </p>
+      )}
+      <div className="gc-invite-humans">
+        <div className="gc-invite-humans-title">在群的人（{humans.length}）</div>
+        <Space wrap size={[8, 8]}>
+          {humans.map((h) => (
+            <Tag key={h.user_id} bordered={false} color={h.role === 'owner' ? 'blue' : undefined}>
+              <span
+                className={`gc-online-dot ${h.online ? 'gc-online-dot--on' : ''}`}
+              />
+              {h.nickname}
+              {h.role === 'owner' ? ' · 群主' : ''}
+              {h.is_me ? ' · 我' : ''}
+            </Tag>
+          ))}
+        </Space>
+      </div>
+    </Modal>
+  )
+}
+
+// ── 输入邀请码加入群聊弹窗（支持粘贴邀请码或完整邀请链接）──
+function JoinByCodeModal({
+  open,
+  onClose,
+  onJoined,
+}: {
+  open: boolean
+  onClose: () => void
+  onJoined: (conv: Conversation) => void
+}) {
+  const [code, setCode] = useState('')
+  const [loading, setLoading] = useState(false)
+
+  useEffect(() => {
+    if (open) setCode('')
+  }, [open])
+
+  // 从输入里提取邀请码：兼容直接粘贴完整链接 .../groups/join/XXXX
+  const extractCode = (raw: string): string => {
+    const t = raw.trim()
+    const m = t.match(/\/groups\/join\/([A-Za-z0-9]+)/)
+    return (m ? m[1] : t).trim()
+  }
+
+  const handleOk = async () => {
+    const c = extractCode(code)
+    if (!c) {
+      antdMessage.warning('请输入邀请码')
+      return
+    }
+    setLoading(true)
+    try {
+      const resp = await groupApi.join(c)
+      antdMessage.success('已加入群聊')
+      onJoined(resp.data)
+    } catch (e) {
+      antdMessage.error((e as Error).message || '加入失败，邀请码可能无效或已失效')
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  return (
+    <Modal
+      title="输入邀请码加入群聊"
+      open={open}
+      onCancel={onClose}
+      onOk={handleOk}
+      okText="加入"
+      cancelText="取消"
+      confirmLoading={loading}
+      width={440}
+    >
+      <p style={{ color: '#667085', marginTop: 0, marginBottom: 14, lineHeight: 1.7 }}>
+        粘贴好友给你的邀请码（或完整邀请链接）即可加入，和大家及群里的 AI 角色一起聊。
+      </p>
+      <Input
+        placeholder="如 A6VMQAH7，或粘贴邀请链接"
+        value={code}
+        onChange={(e) => setCode(e.target.value)}
+        onPressEnter={handleOk}
+        size="large"
+        allowClear
+        autoFocus
+      />
     </Modal>
   )
 }

@@ -19,3 +19,18 @@ class GroupChatStreamRequest(BaseModel):
     message: str = Field(..., min_length=1)
     # 多模态：图片 file_key 列表（带图时每个角色用多模态模型看图发言）
     image_keys: list[str] = Field(default_factory=list)
+
+
+class GroupSayRequest(BaseModel):
+    """多人实时群聊：某真人成员发言。落库后广播，后台触发 AI 接话。"""
+
+    message: str = Field(..., min_length=1)
+    image_keys: list[str] = Field(default_factory=list)
+
+
+class GroupJoinRequest(BaseModel):
+    """凭邀请码加入群聊。"""
+
+    code: str = Field(..., min_length=1, max_length=16)
+    nickname: str | None = Field(default=None, max_length=64)
+

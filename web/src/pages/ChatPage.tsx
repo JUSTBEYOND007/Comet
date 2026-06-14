@@ -31,6 +31,7 @@ import {
   chatApi,
   streamChat,
   regenerateMessage,
+  subscribeChatEvents,
   type Conversation,
   type ChatMessage,
   type ToolCall,
@@ -95,11 +96,21 @@ export default function ChatPage() {
     mq.addEventListener('change', handler)
     return () => mq.removeEventListener('change', handler)
   }, [])
+  // 组件卸载：断开发送流与续传订阅（后台生成不受影响，照常落库）
+  useEffect(() => {
+    return () => {
+      sendAbortRef.current?.abort()
+      resumeAbortRef.current?.abort()
+    }
+  }, [])
   const scrollRef = useRef<HTMLDivElement>(null)
   const msgRefs = useRef<Record<string, HTMLDivElement | null>>({})
   const inputRef = useRef<{ focus: () => void } | null>(null)
   const pendingGreetingRef = useRef<string | null>(null)
   const groupsInited = useRef(false)
+  // 发送流 / 续传订阅的中断控制器：组件卸载或切会话时断开（后台生成不受影响照常落库）
+  const sendAbortRef = useRef<AbortController | null>(null)
+  const resumeAbortRef = useRef<AbortController | null>(null)
 
   const convGroups = groupConversationsByDate(conversations)
 
@@ -288,6 +299,9 @@ export default function ChatPage() {
   const openConversation = async (id: string, focusMessageId?: string) => {
     setActiveId(id)
     setConvDrawerOpen(false)
+    // 切会话：断开上一个会话的续传订阅
+    resumeAbortRef.current?.abort()
+    resumeAbortRef.current = null
     try {
       const [{ data }, favResp] = await Promise.all([
         chatApi.listMessages(id),
@@ -325,15 +339,148 @@ export default function ChatPage() {
           setTimeout(() => setHighlightId(null), 2500)
         }, 200)
       }
+      // 若该会话正有「后台生成」在进行（上次切走/刷新时未结束），订阅续传补全
+      if (!focusMessageId) {
+        const lastRole = data.length ? data[data.length - 1].role : undefined
+        subscribeResume(id, lastRole === 'user')
+      }
     } catch (e) {
       antdMessage.error((e as Error).message)
     }
+  }
+
+  // 断线重连续传：订阅会话进行中的生成，补推已生成内容并续接后续 token。
+  // 没有进行中的生成时后端发 idle，本函数静默结束。
+  // maybePending：进入时最后一条是用户消息（回答可能正在生成或刚落库），idle 时补拉一次历史兜底。
+  const subscribeResume = (convId: string, maybePending = false) => {
+    const controller = new AbortController()
+    resumeAbortRef.current = controller
+    const resumeMsgId = `resume-${convId}-${Date.now()}`
+    let started = false
+    const ensurePlaceholder = (content: string) => {
+      if (started) return
+      started = true
+      setSending(true)
+      setMessages((prev) => [
+        ...prev,
+        {
+          id: resumeMsgId,
+          role: 'assistant',
+          content,
+          toolCalls: [],
+          toolRuns: [],
+          streaming: true,
+          conversationId: convId,
+        },
+      ])
+    }
+    subscribeChatEvents(
+      convId,
+      {
+        onResume: (d) => {
+          ensurePlaceholder(d.content || '')
+          if (d.citations?.length) {
+            setMessages((prev) =>
+              prev.map((m) =>
+                m.id === resumeMsgId ? { ...m, citations: d.citations } : m,
+              ),
+            )
+          }
+        },
+        onToken: (t) => {
+          ensurePlaceholder('')
+          setMessages((prev) =>
+            prev.map((m) =>
+              m.id === resumeMsgId ? { ...m, content: m.content + t } : m,
+            ),
+          )
+        },
+        onToolStart: (tc) => {
+          ensurePlaceholder('')
+          startToolRun(resumeMsgId, tc)
+        },
+        onToolResult: (tc) => finishToolRun(resumeMsgId, tc),
+        onCitation: (cites) => {
+          setMessages((prev) =>
+            prev.map((m) => (m.id === resumeMsgId ? { ...m, citations: cites } : m)),
+          )
+        },
+        onDone: (d) => {
+          settleRunningToolRuns(resumeMsgId, 'success')
+          setMessages((prev) =>
+            prev.map((m) =>
+              m.id === resumeMsgId
+                ? {
+                    ...m,
+                    streaming: false,
+                    id: d.message_id ?? m.id,
+                    conversationId: d.conversation_id,
+                    createdAt: m.createdAt ?? new Date().toISOString(),
+                  }
+                : m,
+            ),
+          )
+          setSending(false)
+          loadConversations()
+        },
+        onIdle: () => {
+          // 没有进行中的生成：若进入时最后一条是用户消息，回答可能在「读历史→订阅」
+          // 间隙刚落库，补拉一次历史兜底（仅当该会话仍是当前会话）。
+          if (maybePending && !controller.signal.aborted) {
+            setTimeout(() => {
+              if (controller.signal.aborted) return
+              chatApi
+                .listMessages(convId)
+                .then(({ data }) => {
+                  if (controller.signal.aborted) return
+                  const last = data[data.length - 1]
+                  if (last && last.role === 'assistant') {
+                    setMessages((prev) =>
+                      prev.some((m) => m.id === last.id)
+                        ? prev
+                        : [
+                            ...prev,
+                            {
+                              id: last.id,
+                              role: 'assistant',
+                              content: last.content,
+                              citations: last.meta_data?.citations,
+                              toolCalls: last.meta_data?.tool_calls,
+                              conversationId: convId,
+                              feedback: last.feedback ?? null,
+                              createdAt: last.created_at,
+                            },
+                          ],
+                    )
+                  }
+                })
+                .catch(() => {})
+            }, 600)
+          }
+        },
+        onError: (msg) => {
+          if (!started) return
+          settleRunningToolRuns(resumeMsgId, 'error')
+          setMessages((prev) =>
+            prev.map((m) =>
+              m.id === resumeMsgId
+                ? { ...m, content: m.content || `⚠️ ${msg}`, streaming: false }
+                : m,
+            ),
+          )
+          setSending(false)
+        },
+      },
+      controller.signal,
+    )
   }
 
   const newConversation = () => {
     setActiveId(undefined)
     setMessages([])
     setConvDrawerOpen(false)
+    resumeAbortRef.current?.abort()
+    resumeAbortRef.current = null
   }
 
   // 手机端：把「会话历史 / 新对话」操作注册到全局顶栏（替代搜索框，合并成一行）
@@ -524,6 +671,12 @@ export default function ChatPage() {
     setMessages((prev) => [...prev, userMsg, aiMsg])
 
     let convId = activeId
+    // 新发送前断开可能存在的续传订阅，避免与本次发送流重复渲染
+    resumeAbortRef.current?.abort()
+    resumeAbortRef.current = null
+    sendAbortRef.current?.abort()
+    const controller = new AbortController()
+    sendAbortRef.current = controller
     await streamChat(
       {
         conversationId: convId,
@@ -591,7 +744,11 @@ export default function ChatPage() {
           setSending(false)
         },
       },
-    )
+      controller.signal,
+    ).catch((e: unknown) => {
+      // 中断（切页面/重发）属正常：后台生成不受影响，静默吞掉
+      if ((e as Error)?.name !== 'AbortError') throw e
+    })
   }
 
   // 快捷提问/建议词：填进输入框并聚焦（不直接发送），

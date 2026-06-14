@@ -134,6 +134,14 @@ async def stream_speaker(
     messages = build_speaker_messages(
         persona_prompt, self_name, member_names, transcript
     )
+    # 追加一条 user 轮次提示：部分 provider（智谱/通义等）不接受「只有 system、无 user」
+    # 的消息数组（报 messages 参数非法），故显式补一条用户消息触发本角色发言。
+    messages = [
+        *messages,
+        HumanMessage(
+            content=f"现在轮到你「{self_name}」发言，请基于上面的群聊记录自然接话。"
+        ),
+    ]
     async for chunk in model.astream(messages):
         if chunk.content:
             text = (

@@ -3,6 +3,7 @@ import { Button, Checkbox, Form, Input, Tabs, message } from 'antd'
 import { LockOutlined, MailOutlined } from '@ant-design/icons'
 import { useNavigate, useSearchParams } from 'react-router-dom'
 import { useAuthStore } from '@/stores/authStore'
+import BeianFooter from '@/components/BeianFooter'
 import logo from '@/images/logo.png'
 
 interface FormValues {
@@ -194,6 +195,9 @@ export default function LoginPage() {
           ]}
         />
         <div className="applogin-foot">个人 AI 知识库与记忆助手</div>
+      </div>
+      <div style={{ position: 'fixed', bottom: 14, left: 0, right: 0, zIndex: 2 }}>
+        <BeianFooter />
       </div>
     </div>
   )

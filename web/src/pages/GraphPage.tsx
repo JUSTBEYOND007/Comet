@@ -178,6 +178,7 @@ export default function GraphPage() {
     const opt = {
       tooltip: {
         confine: true,
+        showDelay: 500,
         formatter: (p: EchartsParam) => {
           if (p.dataType === 'edge' && p.dataIndex !== undefined) {
             const e = visibleEdges[p.dataIndex]

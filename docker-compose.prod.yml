@@ -90,6 +90,10 @@ services:
 
   web:
     restart: unless-stopped
-    # 只保留宿主 80（基础配置的 5173:80 用 !override 替换掉），直接 http://服务器IP 访问
+    # 宿主 80（HTTP，会被 nginx 301 跳转到 HTTPS）+ 443（HTTPS）
     ports: !override
       - "80:80"
+      - "443:443"
+    # 证书目录挂进容器（只读）；证书文件由人工传到服务器 ./web/certs/
+    volumes:
+      - ./web/certs:/etc/nginx/certs:ro

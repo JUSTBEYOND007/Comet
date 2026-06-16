@@ -213,8 +213,10 @@ export default function GraphPage() {
           force: {
             repulsion,
             edgeLength: [70, 160],
-            gravity: 0.05,
-            friction: 0.6,
+            gravity: 0.08,
+            friction: 0.85,
+            // 关闭逐帧布局动画：后台算好直接定位，不再持续飘动/旋转
+            layoutAnimation: false,
           },
           label: { show: true, position: 'right', fontSize: 11, color: '#1D2129' },
           labelLayout: { hideOverlap: true },

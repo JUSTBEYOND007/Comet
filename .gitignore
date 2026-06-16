@@ -16,6 +16,9 @@ files/
 *.pem
 *.key
 
+# ===== SSL 证书（人工传到服务器，不进 git） =====
+web/certs/
+
 # ===== Python / 后端 =====
 .venv/
 venv/

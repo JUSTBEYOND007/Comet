@@ -1,9 +1,9 @@
 """图片多模态理解：生成详细描述 + OCR 文字 + 物体 + 场景。"""
 import base64
-import json
 
 from app.core.llm.client import LLMClient
 from app.core.logging import get_logger
+from app.core.memory.json_utils import parse_json_object
 
 logger = get_logger(__name__)
 
@@ -45,26 +45,21 @@ async def describe_image(
 
 
 def _parse(answer: str) -> dict:
-    text = answer.strip()
-    if text.startswith("```"):
-        text = text.strip("`")
-        if text.startswith("json"):
-            text = text[4:]
-    start = text.find("{")
-    end = text.rfind("}")
+    """解析多模态模型返回的 JSON。
+
+    统一走健壮解析（json_repair：兼容 ```json 代码块包裹、字符串内裸换行、
+    尾随逗号、截断未闭合等中文模型常见毛病），解析不出对象时把原文当描述兜底。
+    """
     default = {"description": "", "ocr_text": "", "objects": [], "scene": ""}
-    if start == -1 or end == -1:
-        # 模型没按 JSON 返回，整段当描述
+    data = parse_json_object(answer)
+    if not data:
+        # 模型没按 JSON 返回 / 解析彻底失败：整段当描述（截断），不把原始 JSON 抛给用户
         default["description"] = answer.strip()[:2000]
         return default
-    try:
-        data = json.loads(text[start : end + 1])
-    except json.JSONDecodeError:
-        default["description"] = answer.strip()[:2000]
-        return default
+    objects = data.get("objects")
     return {
         "description": str(data.get("description", ""))[:2000],
         "ocr_text": str(data.get("ocr_text", ""))[:2000],
-        "objects": data.get("objects", []) if isinstance(data.get("objects"), list) else [],
+        "objects": objects if isinstance(objects, list) else [],
         "scene": str(data.get("scene", ""))[:64],
     }

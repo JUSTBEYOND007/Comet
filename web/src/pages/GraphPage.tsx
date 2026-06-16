@@ -128,8 +128,6 @@ export default function GraphPage() {
 
     const vis = data.nodes.filter((n) => visibleKinds.has(kindOf(n)))
     const visIds = new Set(vis.map((n) => n.id))
-    const idToIdx = new Map<string, number>()
-    vis.forEach((n, i) => idToIdx.set(n.id, i))
 
     // 分类（颜色），按固定顺序取所有出现的大类
     const cats = presentKinds.map((k) => ({
@@ -150,6 +148,8 @@ export default function GraphPage() {
         size = 24
       }
       return {
+        // 用唯一 id 做节点标识（name 可能重复，ECharts 默认按 name 去重会丢节点）
+        id: n.id,
         name: n.name,
         symbol: KIND_META[kind].symbol,
         symbolSize: size,
@@ -164,8 +164,9 @@ export default function GraphPage() {
     const links = visibleEdges.map((e) => {
       const isRelation = e.rel === 'RELATION'
       return {
-        source: idToIdx.get(e.source)!,
-        target: idToIdx.get(e.target)!,
+        // 用真实节点 id 关联（与 node.id 对应）
+        source: e.source,
+        target: e.target,
         lineStyle: isRelation
           ? { color: '#C9CDD4', width: 1.2, opacity: 0.75 }
           : { color: '#E5E6EB', width: 1, type: 'dashed', opacity: 0.6 },

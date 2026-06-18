@@ -119,5 +119,37 @@ class DashboardService:
 
         return {"trend": trend, "community_distribution": community_dist}
 
+    async def agent_briefing(self, user_id: uuid.UUID, limit: int = 5) -> list[dict]:
+        """Agent 简报：最近完成的深度研究报告（含定时任务产出），供首页主动呈现。"""
+        from app.models.research_report_model import (
+            RESEARCH_STATUS_DONE,
+            ResearchReport,
+        )
+
+        rows = await self.session.execute(
+            select(
+                ResearchReport.id,
+                ResearchReport.title,
+                ResearchReport.topic,
+                ResearchReport.task_id,
+                ResearchReport.created_at,
+            )
+            .where(
+                ResearchReport.user_id == user_id,
+                ResearchReport.status == RESEARCH_STATUS_DONE,
+            )
+            .order_by(ResearchReport.created_at.desc())
+            .limit(limit)
+        )
+        return [
+            {
+                "id": str(rid),
+                "title": title or topic,
+                "scheduled": task_id is not None,
+                "created_at": t.isoformat() if t else None,
+            }
+            for rid, title, topic, task_id, t in rows.all()
+        ]
+
 
 __all__ = ["DashboardService"]

@@ -51,6 +51,8 @@ async def write_section_stream(
     sources: list[Source],
 ) -> AsyncGenerator[str, None]:
     """流式撰写一个章节，逐 token 产出。失败时产出占位说明（不中断整篇）。"""
+    from datetime import date
+
     picked = pick_sources_for_section(
         section, sources, settings.research_section_context_sources
     )
@@ -60,6 +62,7 @@ async def write_section_stream(
         heading=section.heading,
         points=section.points,
         sources=_source_payload(picked),
+        today=date.today().isoformat(),
     )
     got = False
     try:

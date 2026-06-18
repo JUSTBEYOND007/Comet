@@ -16,8 +16,10 @@ import {
 } from '@ant-design/icons'
 import { useNavigate } from 'react-router-dom'
 import ReactECharts from 'echarts-for-react'
+import dayjs from 'dayjs'
 import {
   dashboardApi,
+  type AgentBriefItem,
   type DailyReview,
   type MemoryStatsData,
   type OverviewData,
@@ -37,6 +39,7 @@ export default function HomePage() {
   const navigate = useNavigate()
   const user = useAuthStore((s) => s.user)
   const [review, setReview] = useState<DailyReview | null>(null)
+  const [briefing, setBriefing] = useState<AgentBriefItem[]>([])
   const [overview, setOverview] = useState<OverviewData | null>(null)
   const [memStats, setMemStats] = useState<MemoryStatsData | null>(null)
   const [emotionProfile, setEmotionProfile] = useState<EmotionProfile | null>(null)
@@ -89,6 +92,10 @@ export default function HomePage() {
         .then(({ data }) => setModels(data))
         .catch(() => setModels([]))
       fetchReview()
+      dashboardApi
+        .agentBriefing()
+        .then(({ data }) => setBriefing(data))
+        .catch(() => {})
       emotionApi
         .current()
         .then(({ data }) => setEmotionProfile(data))
@@ -482,6 +489,45 @@ export default function HomePage() {
     </Card>
   )
 
+  const briefingCard = briefing.length > 0 && (
+    <Card
+      title="🤖 今日 Agent 简报"
+      style={{ marginBottom: 22, borderRadius: 16 }}
+      extra={
+        <Button type="link" size="small" onClick={() => navigate('/research')}>
+          全部报告
+        </Button>
+      }
+    >
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+        {briefing.map((b) => (
+          <div
+            key={b.id}
+            onClick={() => navigate('/research')}
+            style={{
+              display: 'flex',
+              alignItems: 'center',
+              gap: 8,
+              padding: '8px 10px',
+              borderRadius: 10,
+              background: '#f7f9fc',
+              cursor: 'pointer',
+            }}
+          >
+            <span style={{ fontSize: 16 }}>{b.scheduled ? '⏰' : '🔬'}</span>
+            <span style={{ flex: 1, minWidth: 0, fontSize: 14, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+              {b.title}
+            </span>
+            {b.scheduled && <Tag color="blue">定时</Tag>}
+            <span style={{ color: '#98A2B3', fontSize: 12 }}>
+              {b.created_at ? dayjs(b.created_at).format('MM-DD HH:mm') : ''}
+            </span>
+          </div>
+        ))}
+      </div>
+    </Card>
+  )
+
   const dataSection = (
     <>
       <div className="dash-section-title">📊 数据概览</div>
@@ -591,6 +637,7 @@ export default function HomePage() {
         // 常用态：完整面板（已全部完成则不再显示引导卡）
         <>
           {reviewCard}
+          {briefingCard}
           {finishedSteps < quickSteps.length && quickStartCard}
           {featuresCard}
           {dataSection}

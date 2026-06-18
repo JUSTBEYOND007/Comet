@@ -78,8 +78,23 @@ async def gather_web_sources(
     """多查询联网搜索 → 跨查询按 URL 去重 → 并发抓正文。
 
     抓不到正文的源用搜索摘要兜底（仍保留为来源），保证有内容可写。
+    时效感：自动给查询追加当前年月（用户主题已含具体年份则尊重原查询）。
     """
+    from datetime import date
+
     from app.core.agent.web_search import web_search_structured
+
+    today = date.today()
+    year_token = str(today.year)
+
+    def _augment(q: str) -> str:
+        # 已包含具体年份（2024~2030 范围），尊重用户原查询
+        for y in range(today.year - 2, today.year + 5):
+            if str(y) in q:
+                return q
+        return f"{q} {year_token}年{today.month}月"
+
+    augmented = [_augment(q) for q in queries]
 
     # 1) 限并发跑各子查询的结构化搜索（防搜索 API 429）+ 失败/限流退避重试
     search_sem = asyncio.Semaphore(settings.research_search_concurrency)
@@ -107,7 +122,7 @@ async def gather_web_sources(
             await _emit(emit, icon="search", ok=False, text=f"搜索失败：{q}")
             return []
 
-    results_per_query = await asyncio.gather(*[_search(q) for q in queries])
+    results_per_query = await asyncio.gather(*[_search(q) for q in augmented])
 
     # 2) 跨查询按 URL 去重（保留首次出现的 title/snippet）
     by_url: dict[str, dict] = {}
@@ -176,8 +191,26 @@ async def gather_kb_sources(
     kb_ids: list[str] | None,
     emit: EmitFn | None = None,
 ) -> list[Source]:
-    """对每个子查询检索知识库，按文档去重聚合为来源。失败返回空。"""
+    """对每个子查询检索知识库，按文档去重聚合为来源。失败返回空。
+
+    避免「自循环」：自动剔除「深度研究报告」库的命中（那是本系统自己产出的旧报告，
+    把它当权威源回灌写作会让模型复读旧结论、丢失时效性）。
+    """
     from app.core.rag.search import hybrid_search
+
+    # 计算"深度研究报告"库的 id，用于剔除自产报告，避免研究→存库→检索→自循环
+    excluded_kb_ids: set[str] = set()
+    try:
+        from app.repositories.knowledge_base_repository import (
+            KnowledgeBaseRepository,
+        )
+
+        kb_repo = KnowledgeBaseRepository(session)
+        self_kb = await kb_repo.get_by_name(user_id, "深度研究报告")
+        if self_kb:
+            excluded_kb_ids.add(str(self_kb.id))
+    except Exception as e:  # noqa: BLE001
+        logger.warning("查询深度研究报告库失败（忽略）: %s", e)
 
     by_doc: dict[str, dict] = {}
     for q in queries:
@@ -191,6 +224,9 @@ async def gather_kb_sources(
         for h in hits or []:
             sid = h.get("source_id") or h.get("doc_name")
             if not sid:
+                continue
+            # 过滤自产研究报告（命中 kb_id 在排除集合中），避免知识库自循环
+            if excluded_kb_ids and str(h.get("kb_id") or "") in excluded_kb_ids:
                 continue
             name = h.get("doc_name") or "知识库文档"
             content = (h.get("content") or "").strip()

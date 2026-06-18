@@ -5,6 +5,7 @@
 """
 from app.models.agent_config_model import AgentConfig
 from app.models.agent_persona_model import AgentPersona
+from app.models.agent_task_model import AgentTask
 from app.models.conversation_model import Conversation, Message
 from app.models.conversation_share_model import ConversationShare
 from app.models.daily_review_model import DailyReview
@@ -20,6 +21,7 @@ from app.models.message_feedback_model import MessageFeedback
 from app.models.model_config_model import ModelConfig
 from app.models.persona_group_model import PersonaGroup
 from app.models.play_history_model import PlayHistory
+from app.models.research_report_model import ResearchReport
 from app.models.skill_model import Skill
 from app.models.song_model import Song
 from app.models.tag_model import Tag, document_tags, image_tags
@@ -29,6 +31,7 @@ from app.models.user_model import User
 __all__ = [
     "AgentConfig",
     "AgentPersona",
+    "AgentTask",
     "Conversation",
     "Message",
     "ConversationShare",
@@ -46,6 +49,7 @@ __all__ = [
     "ModelConfig",
     "PersonaGroup",
     "PlayHistory",
+    "ResearchReport",
     "Skill",
     "Song",
     "Tag",

@@ -8,6 +8,7 @@ from fastapi import APIRouter
 from app.controllers import (
     agent_config_controller,
     agent_persona_controller,
+    agent_task_controller,
     auth_controller,
     chat_controller,
     conversation_share_controller,
@@ -25,6 +26,7 @@ from app.controllers import (
     model_config_controller,
     music_controller,
     persona_group_controller,
+    research_controller,
     search_controller,
     skill_controller,
     tag_controller,
@@ -53,6 +55,8 @@ api_router.include_router(favorite_controller.router)
 api_router.include_router(dashboard_controller.router)
 api_router.include_router(emotion_controller.router)
 api_router.include_router(music_controller.router)
+api_router.include_router(research_controller.router)
+api_router.include_router(agent_task_controller.router)
 api_router.include_router(skill_controller.router)
 api_router.include_router(conversation_share_controller.router)
 api_router.include_router(conversation_share_controller.public_router)

@@ -117,6 +117,22 @@ class Settings(BaseSettings):
     cross_session_turns_per_conv: int = 4  # 每会话取最后几轮
     cross_session_max_chars: int = 1200  # 注入上限
 
+    # 深度研究 → 报告（多步自主研究：规划 → 多查询检索+抓正文 → 分章节写作 → 汇总）
+    research_max_queries: int = 8  # 规划阶段最多产出的子查询数
+    research_search_top_k: int = 8  # 每个子查询联网搜索取多少条结果
+    research_search_concurrency: int = 2  # 联网搜索并发上限（防搜索 API 429 限流）
+    research_search_retries: int = 3  # 单个搜索失败/限流的重试次数
+    research_fetch_top_n: int = 8  # 跨查询去重后最多抓取多少个网页正文
+    research_fetch_concurrency: int = 4  # 抓正文并发上限
+    research_fetch_timeout: int = 12  # 单个网页抓取超时（秒）
+    research_source_truncate_chars: int = 3000  # 单个来源正文截断长度
+    research_max_sections: int = 6  # 报告最多章节数
+    research_kb_top_k: int = 6  # 知识库检索每查询取多少条
+    research_mcp_enabled: bool = True  # 是否启用 MCP 增强检索（强模型+已配 MCP 才生效）
+    research_mcp_max_iterations: int = 3  # MCP 增强工具循环最大轮数
+    research_mcp_timeout: int = 40  # MCP 增强整步超时（秒）
+    research_section_context_sources: int = 6  # 每章节写作喂入的相关来源上限
+
     @property
     def database_url(self) -> str:
         return (

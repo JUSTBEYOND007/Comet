@@ -59,6 +59,39 @@ class KnowledgeBaseRepository:
         )
         return await self.create(kb)
 
+    async def get_by_name(
+        self, user_id: uuid.UUID, name: str
+    ) -> KnowledgeBase | None:
+        stmt = select(KnowledgeBase).where(
+            KnowledgeBase.user_id == user_id, KnowledgeBase.name == name
+        )
+        return (await self.session.execute(stmt)).scalar_one_or_none()
+
+    async def ensure_named(
+        self,
+        user_id: uuid.UUID,
+        name: str,
+        *,
+        description: str | None = None,
+        icon: str | None = None,
+        color: str | None = None,
+        chat_enabled: bool = False,
+    ) -> KnowledgeBase:
+        """按名称取知识库，不存在则创建（用于「深度研究报告」等专用库）。"""
+        kb = await self.get_by_name(user_id, name)
+        if kb:
+            return kb
+        kb = KnowledgeBase(
+            user_id=user_id,
+            name=name,
+            description=description,
+            icon=icon,
+            color=color,
+            is_default=False,
+            chat_enabled=chat_enabled,
+        )
+        return await self.create(kb)
+
     async def list_chat_enabled_ids(self, user_id: uuid.UUID) -> list[str]:
         """对话检索范围：所有 chat_enabled=True 的知识库 id（字符串）。"""
         stmt = select(KnowledgeBase.id).where(

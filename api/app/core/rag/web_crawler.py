@@ -40,18 +40,44 @@ def _is_safe_url(url: str) -> bool:
 
 
 async def fetch_url_content(url: str) -> tuple[str, str]:
-    """抓取网页正文，返回 (标题, 正文文本)。"""
+    """抓取网页正文，返回 (标题, 正文文本)。
+
+    用接近真实浏览器的请求头，降低被反爬（如 Cloudflare 521/403）拦截的概率；
+    瞬时错误（超时/5xx）做一次重试。
+    """
     if not _is_safe_url(url):
         raise BizError("不允许访问该地址（内网/非法 URL）", code=3002)
-    try:
-        async with httpx.AsyncClient(
-            timeout=20, follow_redirects=True, max_redirects=5
-        ) as client:
-            resp = await client.get(url, headers={"User-Agent": "CometBot/1.0"})
-            resp.raise_for_status()
-            html = resp.text
-    except httpx.HTTPError as e:
-        raise BizError(f"网页抓取失败：{e}", code=3003) from e
+
+    headers = {
+        "User-Agent": (
+            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
+            "(KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36"
+        ),
+        "Accept": (
+            "text/html,application/xhtml+xml,application/xml;q=0.9,"
+            "image/avif,image/webp,*/*;q=0.8"
+        ),
+        "Accept-Language": "zh-CN,zh;q=0.9,en;q=0.8",
+        "Cache-Control": "no-cache",
+    }
+    last_err: Exception | None = None
+    html = ""
+    for attempt in range(2):
+        try:
+            async with httpx.AsyncClient(
+                timeout=20, follow_redirects=True, max_redirects=5
+            ) as client:
+                resp = await client.get(url, headers=headers)
+                resp.raise_for_status()
+                html = resp.text
+                break
+        except httpx.HTTPError as e:
+            last_err = e
+            if attempt == 0:
+                continue
+            raise BizError(f"网页抓取失败：{e}", code=3003) from e
+    if not html:
+        raise BizError(f"网页抓取失败：{last_err}", code=3003)
 
     extracted = trafilatura.extract(html, include_comments=False, include_tables=True)
     if not extracted:

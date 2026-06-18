@@ -22,6 +22,7 @@ celery_app = Celery(
         "app.tasks.emotion",
         "app.tasks.music",
         "app.tasks.beat",
+        "app.tasks.agent_task",
     ],
 )
 
@@ -40,9 +41,14 @@ celery_app.conf.update(
         "app.tasks.emotion.*": {"queue": "memory"},
         "app.tasks.music.*": {"queue": "parse"},
         "app.tasks.beat.*": {"queue": "beat"},
+        "app.tasks.agent_task.*": {"queue": "beat"},
     },
     # Celery beat 定时
     beat_schedule={
+        "agent-task-heartbeat": {
+            "task": "app.tasks.agent_task.heartbeat",
+            "schedule": crontab(minute="*"),  # 每分钟扫定时任务表
+        },
         "daily-review": {
             "task": "app.tasks.beat.generate_daily_reviews",
             "schedule": crontab(hour=22, minute=0),  # 每天 22:00 生成回顾

@@ -38,3 +38,12 @@ async def daily_review(
     """当日回顾（没有则现场生成）。"""
     data = await DailyReviewService(session).get_or_generate(user.id)
     return success(data)
+
+
+@router.get("/agent-briefing")
+async def agent_briefing(
+    user: User = Depends(get_current_user),
+    session: AsyncSession = Depends(get_session),
+):
+    """Agent 简报：最近完成的深度研究报告（含定时任务产出）。"""
+    return success(await DashboardService(session).agent_briefing(user.id))

@@ -145,6 +145,7 @@ async def hybrid_search(
                     "doc_name": src.get("doc_name"),
                     "source_id": src.get("source_id"),
                     "source_type": src.get("source_type"),
+                    "kb_id": src.get("kb_id"),
                     "score": round(kept[cid], 4),
                 }
             )
@@ -175,6 +176,7 @@ async def hybrid_search(
                 "doc_name": src.get("doc_name"),
                 "source_id": src.get("source_id"),
                 "source_type": src.get("source_type"),
+                "kb_id": src.get("kb_id"),
                 "score": round(fused.get(cid, 0.0), 4),
             }
         )

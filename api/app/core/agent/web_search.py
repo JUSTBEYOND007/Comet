@@ -68,4 +68,62 @@ async def web_search(provider: str, api_key: str, query: str, top_k: int = 10) -
     return await _qianfan_search(api_key, query, top_k)
 
 
-__all__ = ["web_search"]
+# ── 结构化搜索：返回 [{title, url, snippet}]，供深度研究抓正文用 ──
+
+async def _qianfan_search_structured(
+    api_key: str, query: str, top_k: int
+) -> list[dict]:
+    payload = {
+        "messages": [{"role": "user", "content": query}],
+        "search_source": "baidu_search_v2",
+        "resource_type_filter": [{"type": "web", "top_k": top_k}],
+    }
+    headers = {"Content-Type": "application/json", "Authorization": f"Bearer {api_key}"}
+    async with httpx.AsyncClient(timeout=30) as client:
+        resp = await client.post(QIANFAN_SEARCH_URL, headers=headers, json=payload)
+        resp.raise_for_status()
+        data = resp.json()
+    out: list[dict] = []
+    for r in data.get("references", []) or []:
+        out.append({
+            "title": (r.get("title") or "").strip(),
+            "url": (r.get("url") or "").strip(),
+            "snippet": (r.get("content") or r.get("snippet") or "").strip(),
+        })
+    return out
+
+
+async def _tavily_search_structured(
+    api_key: str, query: str, top_k: int
+) -> list[dict]:
+    payload = {
+        "api_key": api_key,
+        "query": query,
+        "max_results": top_k,
+        "search_depth": "basic",
+    }
+    async with httpx.AsyncClient(timeout=30) as client:
+        resp = await client.post(TAVILY_SEARCH_URL, json=payload)
+        resp.raise_for_status()
+        data = resp.json()
+    out: list[dict] = []
+    for r in data.get("results", []) or []:
+        out.append({
+            "title": (r.get("title") or "").strip(),
+            "url": (r.get("url") or "").strip(),
+            "snippet": (r.get("content") or "").strip(),
+        })
+    return out
+
+
+async def web_search_structured(
+    provider: str, api_key: str, query: str, top_k: int = 10
+) -> list[dict]:
+    """结构化联网搜索：返回 [{title, url, snippet}]（带 url，供抓正文）。"""
+    provider = (provider or "").lower()
+    if provider == "tavily":
+        return await _tavily_search_structured(api_key, query, top_k)
+    return await _qianfan_search_structured(api_key, query, top_k)
+
+
+__all__ = ["web_search", "web_search_structured"]

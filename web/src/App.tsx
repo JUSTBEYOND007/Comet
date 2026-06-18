@@ -11,6 +11,8 @@ import GraphPage from './pages/GraphPage'
 import MusicLibraryPage from './pages/MusicLibraryPage'
 import ChatPage from './pages/ChatPage'
 import GroupChatPage from './pages/GroupChatPage'
+import ResearchPage from './pages/ResearchPage'
+import AgentTaskPage from './pages/AgentTaskPage'
 import AgentConfigPage from './pages/AgentConfigPage'
 import SkillPage from './pages/SkillPage'
 import ToolConfigPage from './pages/ToolConfigPage'
@@ -40,6 +42,8 @@ export default function App() {
           <Route index element={<HomePage />} />
           <Route path="chat" element={<ChatPage />} />
           <Route path="group-chat" element={<GroupChatPage />} />
+          <Route path="research" element={<ResearchPage />} />
+          <Route path="agent-tasks" element={<AgentTaskPage />} />
           <Route path="knowledge" element={<KnowledgeBasePage />} />
           <Route path="knowledge-bases/:kbId" element={<KnowledgeDetailPage />} />
           <Route path="images" element={<ImagePage />} />

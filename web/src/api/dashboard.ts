@@ -32,6 +32,13 @@ export interface MemoryStatsData {
   community_distribution: { name: string; value: number }[]
 }
 
+export interface AgentBriefItem {
+  id: string
+  title: string
+  scheduled: boolean
+  created_at: string | null
+}
+
 export const dashboardApi = {
   dailyReview() {
     return client.get<unknown, Wrapped<DailyReview>>('/dashboard/daily-review')
@@ -41,5 +48,8 @@ export const dashboardApi = {
   },
   memoryStats() {
     return client.get<unknown, Wrapped<MemoryStatsData>>('/dashboard/memory-stats')
+  },
+  agentBriefing() {
+    return client.get<unknown, Wrapped<AgentBriefItem[]>>('/dashboard/agent-briefing')
   },
 }

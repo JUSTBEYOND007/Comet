@@ -1,7 +1,7 @@
 import { useState, type ReactNode } from 'react'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
-import { message as antdMessage } from 'antd'
+import { Tooltip, message as antdMessage } from 'antd'
 import { CheckOutlined, CopyOutlined } from '@ant-design/icons'
 import { copyText } from '@/utils/clipboard'
 
@@ -84,7 +84,19 @@ export default function MarkdownMessage({ content }: { content: string }) {
       <ReactMarkdown
         remarkPlugins={[remarkGfm]}
         components={{
-          a: (props) => <a {...props} target="_blank" rel="noreferrer" />,
+          a: ({ title, ...props }) => {
+            const link = (
+              <a {...props} title={title} target="_blank" rel="noreferrer" />
+            )
+            // 带说明（如研究报告来源角标）时，悬停显示简洁 Tooltip 预知跳转目标
+            return title ? (
+              <Tooltip title={title} placement="top">
+                {link}
+              </Tooltip>
+            ) : (
+              link
+            )
+          },
           code({ className, children, ...props }) {
             const isInline = !className
             if (isInline) {

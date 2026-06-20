@@ -1,21 +1,24 @@
-import { useEffect, useMemo, useRef, useState } from 'react'
-import { Button, Card, Empty, Space, Spin, Tag, Typography, message } from 'antd'
-import { MergeCellsOutlined, ReloadOutlined } from '@ant-design/icons'
-import ReactECharts from 'echarts-for-react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { Button, Card, Empty, Input, Space, Spin, Tag, Typography, message } from 'antd'
+import {
+  AimOutlined,
+  MergeCellsOutlined,
+  ReloadOutlined,
+} from '@ant-design/icons'
+import ForceGraph2D, { type ForceGraphMethods } from 'react-force-graph-2d'
 import { memoryApi, type GraphData, type GraphNode } from '@/api/memories'
 
 const { Text, Paragraph } = Typography
 
-// 节点大类：颜色 + 形状 + 中文名。实体/事件默认显示，溯源层（陈述/片段/对话）默认隐藏，
-// 点下方圆点筛选按钮即可点亮查看「这条记忆从哪来」。
+// 节点大类：颜色 + 中文名。实体/事件默认显示，溯源层（陈述/片段/对话）默认隐藏。
 const KIND_ORDER = ['Entity', 'Event', 'Statement', 'Chunk', 'Dialogue'] as const
 type Kind = (typeof KIND_ORDER)[number]
-const KIND_META: Record<string, { label: string; color: string; symbol: string }> = {
-  Entity: { label: '实体', color: '#155EEF', symbol: 'circle' },
-  Event: { label: '事件', color: '#FF8A34', symbol: 'diamond' },
-  Statement: { label: '陈述', color: '#52C41A', symbol: 'roundRect' },
-  Chunk: { label: '片段', color: '#9254DE', symbol: 'rect' },
-  Dialogue: { label: '对话', color: '#13A8A8', symbol: 'triangle' },
+const KIND_META: Record<string, { label: string; color: string }> = {
+  Entity: { label: '实体', color: '#155EEF' },
+  Event: { label: '事件', color: '#FF8A34' },
+  Statement: { label: '陈述', color: '#52C41A' },
+  Chunk: { label: '片段', color: '#9254DE' },
+  Dialogue: { label: '对话', color: '#13A8A8' },
 }
 const REL_LABEL: Record<string, string> = {
   HAS_CHUNK: '包含片段',
@@ -24,11 +27,29 @@ const REL_LABEL: Record<string, string> = {
   RELATION: '关系',
   INVOLVES: '涉及',
 }
-const DEFAULT_KINDS: Kind[] = ['Entity']
+const DEFAULT_KINDS: Kind[] = ['Entity', 'Event']
+const SEED_NEIGHBORS = 1 // 初始焦点展开的跳数
 
-interface EchartsParam {
-  dataType?: string
-  dataIndex?: number
+// react-force-graph 会就地给节点对象补 x/y/vx/vy/fx/fy，故用可变对象
+interface FGNode extends GraphNode {
+  deg: number
+  x?: number
+  y?: number
+  fx?: number
+  fy?: number
+}
+interface FGLink {
+  source: string | FGNode
+  target: string | FGNode
+  rel?: string
+  predicate?: string
+  predicate_surface?: string
+}
+
+const lid = (x: string | FGNode): string => (typeof x === 'object' ? x.id : x)
+
+function kindOf(n: GraphNode): Kind {
+  return n.kind && KIND_META[n.kind] ? (n.kind as Kind) : 'Entity'
 }
 
 export default function GraphPage() {
@@ -36,23 +57,59 @@ export default function GraphPage() {
   const [data, setData] = useState<GraphData | null>(null)
   const [selected, setSelected] = useState<GraphNode | null>(null)
   const [merging, setMerging] = useState(false)
-  // 当前显示的节点大类（默认只显示实体 + 事件，避免溯源层一次性全画导致卡顿）
+  const [search, setSearch] = useState('')
   const [visibleKinds, setVisibleKinds] = useState<Set<string>>(() => new Set(DEFAULT_KINDS))
-  // 容器实际高度（百分比高度在 minHeight 撑起的父级下会算成 0，必须用像素值喂给 ECharts）
-  const wrapRef = useRef<HTMLDivElement>(null)
-  const [chartH, setChartH] = useState(560)
 
+  // 当前“已展开”的节点集合（探索式：从焦点出发，点哪展开哪），用 id 集合驱动
+  const [shownIds, setShownIds] = useState<Set<string>>(() => new Set())
+  // 高亮（hover 聚焦邻居）
+  const highlightNodes = useRef<Set<string>>(new Set())
+  const highlightLinks = useRef<Set<FGLink>>(new Set())
+  const [, forceTick] = useState(0)
+
+  const fgRef = useRef<ForceGraphMethods<FGNode, FGLink> | undefined>(undefined)
+  const wrapRef = useRef<HTMLDivElement>(null)
+  const [size, setSize] = useState({ w: 800, h: 560 })
+
+  // 全量数据派生：节点表、邻接表、度数、持久可变节点对象（保留物理位置）
+  const store = useMemo(() => {
+    const nodeMap = new Map<string, GraphNode>()
+    const adj = new Map<string, Set<string>>()
+    const degree = new Map<string, number>()
+    const fgNodes = new Map<string, FGNode>()
+    if (data) {
+      data.nodes.forEach((n) => {
+        nodeMap.set(n.id, n)
+        adj.set(n.id, new Set())
+        degree.set(n.id, 0)
+      })
+      data.edges.forEach((e) => {
+        if (!nodeMap.has(e.source) || !nodeMap.has(e.target)) return
+        adj.get(e.source)!.add(e.target)
+        adj.get(e.target)!.add(e.source)
+        degree.set(e.source, (degree.get(e.source) ?? 0) + 1)
+        degree.set(e.target, (degree.get(e.target) ?? 0) + 1)
+      })
+      data.nodes.forEach((n) =>
+        fgNodes.set(n.id, { ...n, deg: degree.get(n.id) ?? 0 }),
+      )
+    }
+    return { nodeMap, adj, degree, fgNodes }
+  }, [data])
+
+  // 容器尺寸自适应
   useEffect(() => {
     const el = wrapRef.current
     if (!el) return
-    const update = () => setChartH(el.clientHeight || 560)
+    const update = () =>
+      setSize({ w: el.clientWidth || 800, h: el.clientHeight || 560 })
     update()
     const ro = new ResizeObserver(update)
     ro.observe(el)
     return () => ro.disconnect()
   }, [data])
 
-  const load = (showLoading = true) => {
+  const load = useCallback((showLoading = true) => {
     if (showLoading) setLoading(true)
     setSelected(null)
     memoryApi
@@ -60,12 +117,191 @@ export default function GraphPage() {
       .then(({ data }) => setData(data))
       .catch((e) => message.error((e as Error).message))
       .finally(() => setLoading(false))
-  }
+  }, [])
 
   useEffect(() => {
     load()
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [load])
+
+  // 数据到位后选种子（含「用户/我」优先，否则度数最高的实体）+ 展开一跳作为初始焦点
+  useEffect(() => {
+    if (!data || data.nodes.length === 0) {
+      setShownIds(new Set())
+      return
+    }
+    const entities = data.nodes.filter((n) => kindOf(n) === 'Entity')
+    const pool = entities.length ? entities : data.nodes
+    const seed =
+      pool.find((n) => /用户|^我$|本人|自己/.test(n.name)) ??
+      pool.reduce((a, b) =>
+        (store.degree.get(b.id) ?? 0) > (store.degree.get(a.id) ?? 0) ? b : a,
+      )
+    const ids = new Set<string>([seed.id])
+    let frontier = [seed.id]
+    for (let hop = 0; hop < SEED_NEIGHBORS; hop++) {
+      const next: string[] = []
+      frontier.forEach((id) =>
+        store.adj.get(id)?.forEach((nb) => {
+          if (!ids.has(nb)) {
+            ids.add(nb)
+            next.push(nb)
+          }
+        }),
+      )
+      frontier = next
+    }
+    setShownIds(ids)
+    // 居中
+    setTimeout(() => fgRef.current?.zoomToFit(500, 60), 400)
+  }, [data, store])
+
+  const expand = useCallback(
+    (id: string) => {
+      setShownIds((prev) => {
+        const next = new Set(prev)
+        next.add(id)
+        store.adj.get(id)?.forEach((nb) => next.add(nb))
+        return next
+      })
+    },
+    [store],
+  )
+
+  // 喂给力导图的数据：复用 store.fgNodes 持久对象引用（保留位置，避免每次重排）
+  const graphData = useMemo(() => {
+    const nodes: FGNode[] = []
+    for (const id of shownIds) {
+      const fn = store.fgNodes.get(id)
+      if (fn && visibleKinds.has(kindOf(fn))) nodes.push(fn)
+    }
+    const visIds = new Set(nodes.map((n) => n.id))
+    const links: FGLink[] = []
+    data?.edges.forEach((e) => {
+      if (visIds.has(e.source) && visIds.has(e.target)) {
+        links.push({
+          source: e.source,
+          target: e.target,
+          rel: e.rel,
+          predicate: e.predicate,
+          predicate_surface: e.predicate_surface,
+        })
+      }
+    })
+    return { nodes, links }
+  }, [shownIds, visibleKinds, store, data])
+
+  const maxDeg = useMemo(
+    () => Math.max(1, ...Array.from(store.degree.values())),
+    [store],
+  )
+
+  const nodeRadius = useCallback(
+    (n: FGNode) => {
+      const kind = kindOf(n)
+      if (kind === 'Entity') {
+        const imp = typeof n.importance === 'number' ? n.importance : 0.5
+        return Math.min(10, Math.max(3, 3 + (n.deg / maxDeg) * 6 + imp * 1.5))
+      }
+      if (kind === 'Event') return 4.5
+      return 3.5
+    },
+    [maxDeg],
+  )
+
+  // 配置力的强度：加大斥力 + 拉长连线，让节点散开不重叠
+  useEffect(() => {
+    const fg = fgRef.current
+    if (!fg) return
+    const n = graphData.nodes.length
+    const charge = n > 60 ? -420 : n > 25 ? -320 : -240
+    fg.d3Force('charge')?.strength(charge)
+    fg.d3Force('link')?.distance(70)
+    fg.d3ReheatSimulation()
+  }, [graphData])
+
+  // hover 聚焦：高亮邻居 + 关联边，其余淡化
+  const onNodeHover = useCallback(
+    (node: FGNode | null) => {
+      const hn = highlightNodes.current
+      const hl = highlightLinks.current
+      hn.clear()
+      hl.clear()
+      if (node) {
+        hn.add(node.id)
+        graphData.links.forEach((l) => {
+          if (lid(l.source) === node.id || lid(l.target) === node.id) {
+            hl.add(l)
+            hn.add(lid(l.source))
+            hn.add(lid(l.target))
+          }
+        })
+      }
+      forceTick((t) => t + 1)
+    },
+    [graphData],
+  )
+
+  const onNodeClick = useCallback(
+    (node: FGNode) => {
+      expand(node.id)
+      if (kindOf(node) === 'Entity') setSelected(node)
+      fgRef.current?.centerAt(node.x, node.y, 500)
+    },
+    [expand],
+  )
+
+  const onNodeDragEnd = useCallback((node: FGNode) => {
+    // 拖完固定该节点（pin），方便手动整理布局
+    node.fx = node.x
+    node.fy = node.y
   }, [])
+
+  const doSearch = useCallback(
+    (q: string) => {
+      const kw = q.trim()
+      if (!kw || !data) return
+      const hit =
+        store.fgNodes.get(kw) ??
+        Array.from(store.fgNodes.values()).find((n) =>
+          n.name.toLowerCase().includes(kw.toLowerCase()),
+        )
+      if (!hit) {
+        message.info('没找到匹配的实体')
+        return
+      }
+      // 把命中点设为新焦点（它+一跳邻居），并居中
+      const ids = new Set<string>([hit.id])
+      store.adj.get(hit.id)?.forEach((nb) => ids.add(nb))
+      setShownIds((prev) => new Set([...prev, ...ids]))
+      setSelected(store.nodeMap.get(hit.id) ?? null)
+      setTimeout(() => {
+        if (hit.x != null && hit.y != null) fgRef.current?.centerAt(hit.x, hit.y, 600)
+        fgRef.current?.zoom(2.2, 600)
+      }, 300)
+    },
+    [data, store],
+  )
+
+  const presentKinds = useMemo<Kind[]>(() => {
+    if (!data) return []
+    const set = new Set<Kind>()
+    data.nodes.forEach((n) => set.add(kindOf(n)))
+    return KIND_ORDER.filter((k) => set.has(k))
+  }, [data])
+
+  const kindCount = useMemo(() => {
+    const m = new Map<Kind, number>()
+    data?.nodes.forEach((n) => m.set(kindOf(n), (m.get(kindOf(n)) ?? 0) + 1))
+    return m
+  }, [data])
+
+  const toggleKind = (k: Kind) =>
+    setVisibleKinds((prev) => {
+      const next = new Set(prev)
+      if (next.has(k)) next.delete(k)
+      else next.add(k)
+      return next
+    })
 
   const onMergeDuplicates = async () => {
     setMerging(true)
@@ -80,165 +316,13 @@ export default function GraphPage() {
     }
   }
 
-  const kindOf = (n: GraphNode): Kind =>
-    n.kind && KIND_META[n.kind] ? (n.kind as Kind) : 'Entity'
-
-  // 出现过的节点大类（用于筛选按钮 + 各类计数）
-  const presentKinds = useMemo<Kind[]>(() => {
-    if (!data) return []
-    const counts = new Map<Kind, number>()
-    data.nodes.forEach((n) => {
-      const k = kindOf(n)
-      counts.set(k, (counts.get(k) ?? 0) + 1)
+  const resetView = () => {
+    // 解除所有 pin，回到焦点视图
+    store.fgNodes.forEach((n) => {
+      n.fx = undefined
+      n.fy = undefined
     })
-    return KIND_ORDER.filter((k) => counts.has(k))
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [data])
-
-  const kindCount = useMemo(() => {
-    const m = new Map<Kind, number>()
-    data?.nodes.forEach((n) => {
-      const k = kindOf(n)
-      m.set(k, (m.get(k) ?? 0) + 1)
-    })
-    return m
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [data])
-
-  const toggleKind = (k: Kind) =>
-    setVisibleKinds((prev) => {
-      const next = new Set(prev)
-      if (next.has(k)) next.delete(k)
-      else next.add(k)
-      return next
-    })
-
-  // 只把「可见大类」的节点和两端都可见的边喂给 ECharts（force 只算可见节点，流畅且必显示）
-  const { option, visibleNodes } = useMemo(() => {
-    if (!data || data.nodes.length === 0) return { option: null, visibleNodes: [] as GraphNode[] }
-
-    // 全量连接度（节点大小用，反映真实重要度）
-    const degree = new Map<string, number>()
-    data.nodes.forEach((n) => degree.set(n.id, 0))
-    data.edges.forEach((e) => {
-      degree.set(e.source, (degree.get(e.source) ?? 0) + 1)
-      degree.set(e.target, (degree.get(e.target) ?? 0) + 1)
-    })
-    const maxDeg = Math.max(1, ...Array.from(degree.values()))
-
-    const vis = data.nodes.filter((n) => visibleKinds.has(kindOf(n)))
-    const visIds = new Set(vis.map((n) => n.id))
-
-    // 分类（颜色），按固定顺序取所有出现的大类
-    const cats = presentKinds.map((k) => ({
-      name: KIND_META[k].label,
-      itemStyle: { color: KIND_META[k].color },
-    }))
-    const catIndex = new Map<Kind, number>()
-    presentKinds.forEach((k, i) => catIndex.set(k, i))
-
-    const nodes = vis.map((n) => {
-      const kind = kindOf(n)
-      const deg = degree.get(n.id) ?? 0
-      const imp = typeof n.importance === 'number' ? n.importance : 0.5
-      let size = 13
-      if (kind === 'Entity') {
-        size = Math.min(56, Math.max(16, Math.round(18 + (deg / maxDeg) * 30 + imp * 8)))
-      } else if (kind === 'Event') {
-        size = 24
-      }
-      return {
-        // 用唯一 id 做节点标识（name 可能重复，ECharts 默认按 name 去重会丢节点）
-        id: n.id,
-        name: n.name,
-        symbol: KIND_META[kind].symbol,
-        symbolSize: size,
-        category: catIndex.get(kind),
-        value: deg,
-      }
-    })
-
-    const visibleEdges = data.edges.filter(
-      (e) => visIds.has(e.source) && visIds.has(e.target),
-    )
-    const links = visibleEdges.map((e) => {
-      const isRelation = e.rel === 'RELATION'
-      return {
-        // 用真实节点 id 关联（与 node.id 对应）
-        source: e.source,
-        target: e.target,
-        lineStyle: isRelation
-          ? { color: '#C9CDD4', width: 1.2, opacity: 0.75 }
-          : { color: '#E5E6EB', width: 1, type: 'dashed', opacity: 0.6 },
-      }
-    })
-
-    const repulsion = vis.length > 80 ? 320 : vis.length > 40 ? 240 : 180
-
-    const opt = {
-      tooltip: {
-        confine: true,
-        showDelay: 500,
-        formatter: (p: EchartsParam) => {
-          if (p.dataType === 'edge' && p.dataIndex !== undefined) {
-            const e = visibleEdges[p.dataIndex]
-            if (!e) return ''
-            return e.predicate_surface || e.predicate || REL_LABEL[e.rel ?? ''] || ''
-          }
-          if (p.dataType === 'node' && p.dataIndex !== undefined) {
-            const n = vis[p.dataIndex]
-            if (!n) return ''
-            const kindLabel = KIND_META[n.kind ?? 'Entity']?.label ?? '实体'
-            const facts = (n.core_facts ?? [])
-              .slice(0, 3)
-              .map((f) => `• ${f}`)
-              .join('<br/>')
-            return `<b>${n.name}</b> <span style="color:#98A2B3">${
-              n.type || kindLabel
-            }</span>${facts ? `<br/>${facts}` : ''}`
-          }
-          return ''
-        },
-      },
-      series: [
-        {
-          type: 'graph',
-          layout: 'force',
-          roam: true,
-          draggable: true,
-          categories: cats,
-          data: nodes,
-          links,
-          edgeSymbol: ['none', 'arrow'],
-          edgeSymbolSize: 6,
-          force: {
-            repulsion,
-            edgeLength: [70, 160],
-            gravity: 0.08,
-            friction: 0.85,
-            // 关闭逐帧布局动画：后台算好直接定位，不再持续飘动/旋转
-            layoutAnimation: false,
-          },
-          label: { show: true, position: 'right', fontSize: 11, color: '#1D2129' },
-          labelLayout: { hideOverlap: true },
-          emphasis: {
-            focus: 'adjacency',
-            label: { show: true, fontWeight: 'bold' },
-            lineStyle: { width: 2.5, color: '#155EEF', opacity: 1 },
-          },
-        },
-      ],
-    }
-    return { option: opt, visibleNodes: vis }
-  }, [data, visibleKinds, presentKinds])
-
-  const onEvents = {
-    click: (p: EchartsParam) => {
-      if (p.dataType === 'node' && p.dataIndex !== undefined) {
-        const n = visibleNodes[p.dataIndex]
-        if (n && (n.kind === 'Entity' || !n.kind)) setSelected(n)
-      }
-    },
+    load()
   }
 
   return (
@@ -246,55 +330,121 @@ export default function GraphPage() {
       <Card
         title="知识图谱"
         extra={
-          <Space>
-            <Button icon={<MergeCellsOutlined />} loading={merging} onClick={onMergeDuplicates}>
+          <Space wrap>
+            <Input.Search
+              placeholder="搜索实体定位"
+              allowClear
+              size="small"
+              style={{ width: 180 }}
+              value={search}
+              onChange={(e) => setSearch(e.target.value)}
+              onSearch={doSearch}
+            />
+            <Button
+              size="small"
+              icon={<AimOutlined />}
+              onClick={() => fgRef.current?.zoomToFit(500, 60)}
+            >
+              居中
+            </Button>
+            <Button
+              size="small"
+              icon={<MergeCellsOutlined />}
+              loading={merging}
+              onClick={onMergeDuplicates}
+            >
               合并重复
             </Button>
-            <Button icon={<ReloadOutlined />} onClick={() => load()} disabled={loading}>
-              刷新
+            <Button size="small" icon={<ReloadOutlined />} onClick={resetView} disabled={loading}>
+              重置视图
             </Button>
           </Space>
         }
         styles={{ body: { padding: 0, height: 'calc(100% - 57px)' } }}
         style={{ flex: 1, display: 'flex', flexDirection: 'column' }}
       >
-        <div ref={wrapRef} style={{ position: 'relative', height: '100%', minHeight: '32rem' }}>
+        <div
+          ref={wrapRef}
+          style={{ position: 'relative', height: '100%', minHeight: '32rem', overflow: 'hidden' }}
+        >
           {loading ? (
-            <div style={{ display: 'flex', justifyContent: 'center', alignItems: 'center', height: '100%' }}>
+            <div style={center}>
               <Spin />
             </div>
           ) : !data || data.nodes.length === 0 ? (
-            <div style={{ display: 'flex', justifyContent: 'center', alignItems: 'center', height: '100%' }}>
+            <div style={center}>
               <Empty description="还没有记忆实体，先去主动记住或对话萃取一些记忆" />
             </div>
           ) : (
             <>
-              {option && (
-                <ReactECharts
-                  key={Array.from(visibleKinds).sort().join(',')}
-                  option={option}
-                  notMerge
-                  style={{ width: '100%', height: chartH }}
-                  onEvents={onEvents}
-                />
-              )}
-
-              {/* 类型筛选圆点：点击显隐对应大类 */}
-              <div
-                style={{
-                  position: 'absolute',
-                  bottom: 14,
-                  left: '50%',
-                  transform: 'translateX(-50%)',
-                  display: 'flex',
-                  flexWrap: 'wrap',
-                  gap: 8,
-                  background: 'rgba(255,255,255,0.92)',
-                  borderRadius: 20,
-                  padding: '6px 12px',
-                  boxShadow: '0 2px 10px rgba(0,0,0,0.08)',
+              <ForceGraph2D
+                ref={fgRef}
+                graphData={graphData}
+                width={size.w}
+                height={size.h}
+                nodeId="id"
+                cooldownTicks={120}
+                d3VelocityDecay={0.3}
+                linkColor={(l) =>
+                  highlightLinks.current.has(l as FGLink)
+                    ? '#155EEF'
+                    : (l as FGLink).rel === 'RELATION'
+                      ? 'rgba(150,160,175,0.55)'
+                      : 'rgba(200,205,215,0.4)'
+                }
+                linkWidth={(l) => (highlightLinks.current.has(l as FGLink) ? 2.5 : 1)}
+                linkDirectionalArrowLength={(l) =>
+                  (l as FGLink).rel === 'RELATION' ? 3.5 : 0
+                }
+                linkDirectionalArrowRelPos={1}
+                linkLabel={(l) => {
+                  const e = l as FGLink
+                  return e.predicate_surface || e.predicate || REL_LABEL[e.rel ?? ''] || ''
                 }}
-              >
+                onNodeHover={(n) => onNodeHover(n as FGNode | null)}
+                onNodeClick={(n) => onNodeClick(n as FGNode)}
+                onNodeDragEnd={(n) => onNodeDragEnd(n as FGNode)}
+                onBackgroundClick={() => setSelected(null)}
+                nodeCanvasObject={(node, ctx, globalScale) => {
+                  const n = node as FGNode
+                  const r = nodeRadius(n)
+                  const color = KIND_META[kindOf(n)].color
+                  const dim =
+                    highlightNodes.current.size > 0 && !highlightNodes.current.has(n.id)
+                  ctx.globalAlpha = dim ? 0.18 : 1
+                  // 节点圆
+                  ctx.beginPath()
+                  ctx.arc(n.x!, n.y!, r, 0, 2 * Math.PI)
+                  ctx.fillStyle = color
+                  ctx.fill()
+                  if (selected?.id === n.id) {
+                    ctx.lineWidth = 2 / globalScale
+                    ctx.strokeStyle = '#155EEF'
+                    ctx.stroke()
+                  }
+                  // 标签：缩得太小不画，避免糊成一团
+                  if (globalScale > 0.7 || r > 9) {
+                    const label = n.name.length > 10 ? n.name.slice(0, 10) + '…' : n.name
+                    const fs = Math.max(3, 11 / globalScale)
+                    ctx.font = `${fs}px -apple-system, "PingFang SC", sans-serif`
+                    ctx.textAlign = 'center'
+                    ctx.textBaseline = 'top'
+                    ctx.fillStyle = dim ? 'rgba(29,33,41,0.25)' : '#1D2129'
+                    ctx.fillText(label, n.x!, n.y! + r + 1)
+                  }
+                  ctx.globalAlpha = 1
+                }}
+                nodePointerAreaPaint={(node, color, ctx) => {
+                  const n = node as FGNode
+                  ctx.fillStyle = color
+                  ctx.beginPath()
+                  ctx.arc(n.x!, n.y!, nodeRadius(n) + 2, 0, 2 * Math.PI)
+                  ctx.fill()
+                }}
+              />
+
+              {/* 类型筛选圆点 */}
+              <div style={filterBar}>
                 {presentKinds.map((k) => {
                   const on = visibleKinds.has(k)
                   const meta = KIND_META[k]
@@ -329,19 +479,7 @@ export default function GraphPage() {
               </div>
 
               {selected && (
-                <div
-                  style={{
-                    position: 'absolute',
-                    top: 16,
-                    right: 16,
-                    width: '18rem',
-                    maxWidth: '80%',
-                    background: '#fff',
-                    borderRadius: 12,
-                    boxShadow: '0 4px 16px rgba(0,0,0,0.1)',
-                    padding: 16,
-                  }}
-                >
+                <div style={detailPanel}>
                   <Text strong style={{ fontSize: 16 }}>
                     {selected.name}
                   </Text>
@@ -393,24 +531,11 @@ export default function GraphPage() {
                 </div>
               )}
 
-              <div
-                style={{
-                  position: 'absolute',
-                  left: 16,
-                  top: 16,
-                  background: 'rgba(255,255,255,0.92)',
-                  borderRadius: 8,
-                  padding: '6px 10px',
-                  fontSize: 12,
-                  color: '#667085',
-                  pointerEvents: 'none',
-                  maxWidth: '60%',
-                }}
-              >
-                共 {data.nodes.length} 节点 · {data.edges.length} 关系，当前显示{' '}
-                {visibleNodes.length} 个
+              <div style={hintBox}>
+                共 {data.nodes.length} 节点 · {data.edges.length} 关系，当前展开{' '}
+                {graphData.nodes.length} 个
                 <br />
-                点下方圆点可隐藏某类型 · 大小=连接数 · 滚轮缩放、拖拽 · 点实体看详情
+                点节点展开它的关联 · 拖动可固定 · 滚轮缩放 · 搜索定位 · 下方圆点筛类型
               </div>
             </>
           )}
@@ -418,4 +543,50 @@ export default function GraphPage() {
       </Card>
     </div>
   )
+}
+
+const center: React.CSSProperties = {
+  display: 'flex',
+  justifyContent: 'center',
+  alignItems: 'center',
+  height: '100%',
+}
+
+const filterBar: React.CSSProperties = {
+  position: 'absolute',
+  bottom: 14,
+  left: '50%',
+  transform: 'translateX(-50%)',
+  display: 'flex',
+  flexWrap: 'wrap',
+  gap: 8,
+  background: 'rgba(255,255,255,0.92)',
+  borderRadius: 20,
+  padding: '6px 12px',
+  boxShadow: '0 2px 10px rgba(0,0,0,0.08)',
+}
+
+const detailPanel: React.CSSProperties = {
+  position: 'absolute',
+  top: 16,
+  right: 16,
+  width: '18rem',
+  maxWidth: '80%',
+  background: '#fff',
+  borderRadius: 12,
+  boxShadow: '0 4px 16px rgba(0,0,0,0.1)',
+  padding: 16,
+}
+
+const hintBox: React.CSSProperties = {
+  position: 'absolute',
+  left: 16,
+  top: 16,
+  background: 'rgba(255,255,255,0.92)',
+  borderRadius: 8,
+  padding: '6px 10px',
+  fontSize: 12,
+  color: '#667085',
+  pointerEvents: 'none',
+  maxWidth: '60%',
 }

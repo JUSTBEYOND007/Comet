@@ -132,6 +132,18 @@ class Settings(BaseSettings):
     research_mcp_max_iterations: int = 3  # MCP 增强工具循环最大轮数
     research_mcp_timeout: int = 40  # MCP 增强整步超时（秒）
     research_section_context_sources: int = 6  # 每章节写作喂入的相关来源上限
+    # Deep Research v2：边检索边提炼 + 大纲优先 + 反思补搜
+    research_distill_concurrency: int = 4  # 逐源提炼并发上限
+    research_relevance_min: float = 0.3  # 提炼要点相关度低于此值丢弃
+    research_max_learnings: int = 60  # 全局要点上限（控 token）
+    research_reflection_rounds: int = 1  # 反思补搜轮数（0=关闭）
+    research_reflection_max_queries: int = 4  # 每轮反思补充查询上限
+    research_learnings_per_section: int = 10  # 每章节写作喂入的要点上限
+    research_subquestions_per_section: int = 3  # 规划时每章节子问题数
+
+    # 来源质量过滤（联网源按权威性+充实度打分排序，丢弃低质源，提升报告可靠性）
+    research_source_quality_filter: bool = True  # 是否启用来源质量打分排序
+    research_min_source_chars: int = 120  # 联网源正文少于此值视为抓取失败/登录墙，丢弃
 
     @property
     def database_url(self) -> str:

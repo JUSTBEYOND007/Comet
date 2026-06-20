@@ -12,20 +12,25 @@ from app.core.memory.json_utils import parse_json_object
 logger = get_logger(__name__)
 
 MIN_SECTIONS = 3
-MIN_QUERIES = 3
 
 
 def _fallback_plan(topic: str) -> ResearchPlan:
     """规划失败兜底：单章节 + 用主题本身作查询，保证流程不中断。"""
     return ResearchPlan(
         title=topic[:30] or "研究报告",
-        sections=[PlanSection(heading="综合分析", points="围绕主题综合检索资料并归纳")],
+        sections=[
+            PlanSection(
+                heading="综合分析",
+                points="围绕主题综合检索资料并归纳",
+                sub_questions=[topic],
+            )
+        ],
         queries=[topic],
     )
 
 
 async def make_plan(model: ChatOpenAI, topic: str) -> ResearchPlan:
-    """生成研究计划；任何异常或解析失败都降级到兜底计划。"""
+    """生成研究计划（标题 + 多视角章节 + 子问题）；异常或解析失败降级兜底。"""
     topic = (topic or "").strip()
     if not topic:
         return _fallback_plan("研究报告")
@@ -36,8 +41,7 @@ async def make_plan(model: ChatOpenAI, topic: str) -> ResearchPlan:
         today=date.today().isoformat(),
         min_sections=MIN_SECTIONS,
         max_sections=settings.research_max_sections,
-        min_queries=MIN_QUERIES,
-        max_queries=settings.research_max_queries,
+        sub_per_section=settings.research_subquestions_per_section,
     )
     try:
         resp = await model.ainvoke(prompt)
@@ -60,20 +64,39 @@ async def make_plan(model: ChatOpenAI, topic: str) -> ResearchPlan:
         heading = (item.get("heading") or "").strip()
         if not heading:
             continue
+        subs = [
+            q.strip()
+            for q in (item.get("sub_questions") or [])
+            if isinstance(q, str) and q.strip()
+        ]
         sections.append(
-            PlanSection(heading=heading[:60], points=(item.get("points") or "").strip())
+            PlanSection(
+                heading=heading[:60],
+                points=(item.get("points") or "").strip(),
+                sub_questions=subs,
+            )
         )
     sections = sections[: settings.research_max_sections]
     if not sections:
-        sections = [PlanSection(heading="综合分析", points="围绕主题综合检索资料并归纳")]
+        sections = [
+            PlanSection(
+                heading="综合分析", points="围绕主题综合检索资料并归纳", sub_questions=[topic]
+            )
+        ]
 
+    # 扁平化全部子问题为检索查询（去重保序），供检索阶段复用。
+    # 兼容旧格式：若模型仍返回顶层 queries 也并入。
     queries: list[str] = []
-    for q in data.get("queries") or []:
-        if isinstance(q, str) and q.strip():
-            queries.append(q.strip())
-    # 去重保序
     seen: set[str] = set()
-    queries = [q for q in queries if not (q in seen or seen.add(q))]
+    for sec in sections:
+        for q in sec.sub_questions:
+            if q not in seen:
+                seen.add(q)
+                queries.append(q)
+    for q in data.get("queries") or []:
+        if isinstance(q, str) and q.strip() and q.strip() not in seen:
+            seen.add(q.strip())
+            queries.append(q.strip())
     queries = queries[: settings.research_max_queries]
     if not queries:
         queries = [topic]

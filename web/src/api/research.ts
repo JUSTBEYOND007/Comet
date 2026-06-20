@@ -96,6 +96,12 @@ export const researchApi = {
       { kb_id: kbId ?? null },
     )
   },
+  optimizeTopic(topic: string) {
+    return client.post<unknown, Wrapped<{ optimized: string }>>(
+      '/research/optimize-topic',
+      { topic },
+    )
+  },
 }
 
 function dispatch(

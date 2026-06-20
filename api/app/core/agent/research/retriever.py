@@ -56,6 +56,65 @@ def _truncate(text: str) -> str:
     return text[:limit] + "…" if len(text) > limit else text
 
 
+# 域名权威性启发式词表（确定性快速打分，无需额外 LLM 调用）。
+# 命中即加分；这是经验性优先级，不是黑白名单，未命中的域名仍按充实度参与排序。
+_AUTHORITATIVE_TLDS = (".gov.cn", ".edu.cn", ".gov", ".edu", ".ac.cn", ".org.cn")
+_AUTHORITATIVE_DOMAINS = {
+    # 官方统计 / 权威媒体
+    "stats.gov.cn", "people.com.cn", "xinhuanet.com", "cctv.com",
+    "caixin.com", "yicai.com", "ce.cn", "gov.cn",
+    # 科技 / 学术 / 开发者权威
+    "36kr.com", "infoq.cn", "github.com", "arxiv.org", "nature.com",
+    "sciencedirect.com", "wikipedia.org", "juejin.cn", "csdn.net",
+    "segmentfault.com", "ieee.org", "acm.org",
+}
+# 内容农场 / 聚合营销号（时效与可信度通常较差，降权但不直接丢弃）
+_LOW_QUALITY_HINTS = ("baijiahao.baidu.com", "baidu.com/s", "sohu.com/a")
+
+
+def _quality_score(source: "Source") -> float:
+    """给单个联网来源打质量分（越高越靠前）。
+
+    信号（确定性、无 LLM）：
+    - 正文充实度：抓到完整正文比仅剩搜索摘要更可信（封顶 1.0）。
+    - 域名权威性：官方/权威 TLD 与知名站点加分，内容农场降权。
+    """
+    score = 0.0
+    n = len(source.content or "")
+    score += min(n / 1500.0, 1.0)  # 0~1：正文越长越像完整文章
+    dom = _domain_of(source.url or "")
+    if dom:
+        if any(dom.endswith(t) for t in _AUTHORITATIVE_TLDS):
+            score += 1.0
+        elif any(dom == d or dom.endswith("." + d) for d in _AUTHORITATIVE_DOMAINS):
+            score += 0.7
+        if any(h in (source.url or "") for h in _LOW_QUALITY_HINTS):
+            score -= 0.8
+    return score
+
+
+def _domain_of(url: str) -> str:
+    from urllib.parse import urlparse
+
+    try:
+        return (urlparse(url).netloc or "").lower()
+    except Exception:  # noqa: BLE001
+        return ""
+
+
+def _rank_and_filter_web(sources: list["Source"]) -> list["Source"]:
+    """对联网来源做质量过滤 + 排序：丢弃正文过少的（抓取失败/登录墙），按质量分降序。
+
+    仅作用于联网源；知识库（用户权威资料）/ MCP（专注工具）来源视为可信，不在此过滤。
+    排序很关键：下游逐源提炼按顺序处理、要点按相关度截断，优先把好源排前面能提质。
+    """
+    if not settings.research_source_quality_filter:
+        return sources
+    kept = [s for s in sources if len(s.content or "") >= settings.research_min_source_chars]
+    kept.sort(key=_quality_score, reverse=True)
+    return kept
+
+
 async def get_websearch_config(
     session: AsyncSession, user_id: uuid.UUID
 ) -> tuple[str, str] | None:
@@ -179,7 +238,18 @@ async def gather_web_sources(
         return Source(index=0, type=SOURCE_WEB, title=title.strip()[:200], content=body, url=url)
 
     fetched = await asyncio.gather(*[_fetch(r) for r in candidates])
-    return [s for s in fetched if s is not None]
+    web_sources = [s for s in fetched if s is not None]
+
+    # 4) 质量过滤 + 排序：丢弃抓取失败/正文过少的源，按权威性与充实度排序
+    before = len(web_sources)
+    web_sources = _rank_and_filter_web(web_sources)
+    dropped = before - len(web_sources)
+    if dropped > 0:
+        await _emit(
+            emit, icon="web", ok=True,
+            text=f"质量过滤：保留 {len(web_sources)} 个优质来源（剔除 {dropped} 个低质/抓取失败）",
+        )
+    return web_sources
 
 
 # ── B. 知识库检索（用户权威资料）──
@@ -334,9 +404,9 @@ async def _run_mcp_loop(
     return sources
 
 
-def assign_indices(sources: list[Source]) -> list[Source]:
-    """给来源统一编引用号（从 1 起）。"""
-    for i, s in enumerate(sources, 1):
+def assign_indices(sources: list[Source], start: int = 1) -> list[Source]:
+    """给来源统一编引用号（从 start 起，支持多轮检索续编）。"""
+    for i, s in enumerate(sources, start):
         s.index = i
     return sources
 

@@ -351,6 +351,53 @@ class ResearchService:
         except Exception as e:
             logger.warning("研究失败落库出错（忽略）: report=%s err=%s", report_id, e)
 
+    # ── 研究指令润色 ──
+
+    async def optimize_topic(self, user_id: uuid.UUID, raw_topic: str) -> str:
+        """调用默认对话模型，把口语化/笼统的研究指令润色成清晰可执行的研究主题。
+
+        深度研究主题输入框 + 定时任务「研究指令」共用此接口。失败抛 BizError（中文）。
+        """
+        from langchain_core.messages import HumanMessage
+
+        from app.core.agent.research.prompt_renderer import render_research_prompt
+        from app.core.llm.chat_model import build_default_chat_model
+
+        raw = (raw_topic or "").strip()
+        if not raw:
+            raise BizError("请先填写要润色的研究指令", code=3060)
+        model, _ = await build_default_chat_model(
+            self.session, user_id, temperature=0.4, streaming=False
+        )
+        meta_prompt = render_research_prompt("optimize_topic.jinja2", raw_topic=raw)
+        try:
+            resp = await model.ainvoke([HumanMessage(content=meta_prompt)])
+        except Exception as e:
+            logger.warning("研究指令润色失败: user=%s err=%s", user_id, e)
+            raise BizError(f"润色失败：{e}", code=3061) from e
+        content = resp.content if isinstance(resp.content, str) else str(resp.content)
+        optimized = self._strip_code_fence(content.strip())
+        if not optimized:
+            raise BizError("润色未返回有效内容", code=3062)
+        logger.info("研究指令润色成功: user=%s in=%d out=%d", user_id, len(raw), len(optimized))
+        return optimized
+
+    @staticmethod
+    def _strip_code_fence(text: str) -> str:
+        """兜底剥离 LLM 可能误加的 ``` 代码块包裹与多余引号。"""
+        t = text.strip()
+        if t.startswith("```"):
+            lines = t.splitlines()
+            if lines:
+                lines = lines[1:]
+            if lines and lines[-1].strip().startswith("```"):
+                lines = lines[:-1]
+            t = "\n".join(lines).strip()
+        # 模型偶尔用引号把整句包起来，去掉首尾成对引号
+        if len(t) >= 2 and t[0] in "\"'“”「" and t[-1] in "\"'“”」":
+            t = t[1:-1].strip()
+        return t
+
     # ── 配置校验 / 检索范围 ──
 
     async def _require_websearch(self, user_id: uuid.UUID) -> None:

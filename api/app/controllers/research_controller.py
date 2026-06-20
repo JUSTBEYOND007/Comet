@@ -9,7 +9,11 @@ from app.core.dependencies import get_current_user
 from app.core.response import success
 from app.db.postgres import get_session
 from app.models.user_model import User
-from app.schemas.research_schema import ResearchStartRequest, SaveToKbRequest
+from app.schemas.research_schema import (
+    OptimizeTopicRequest,
+    ResearchStartRequest,
+    SaveToKbRequest,
+)
 from app.services.research_service import ResearchService
 
 router = APIRouter(prefix="/research", tags=["research"])
@@ -19,6 +23,17 @@ _SSE_HEADERS = {
     "Connection": "keep-alive",
     "X-Accel-Buffering": "no",
 }
+
+
+@router.post("/optimize-topic")
+async def optimize_topic(
+    body: OptimizeTopicRequest,
+    user: User = Depends(get_current_user),
+    session: AsyncSession = Depends(get_session),
+):
+    """一键润色研究指令（深度研究主题 + 定时任务研究指令共用）。"""
+    optimized = await ResearchService(session).optimize_topic(user.id, body.topic)
+    return success({"optimized": optimized})
 
 
 @router.post("/stream")

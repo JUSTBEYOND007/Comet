@@ -13,6 +13,7 @@ class PlanSection:
 
     heading: str  # 章节标题
     points: str = ""  # 该章节要写的要点/角度（指导写作，不直接展示）
+    sub_questions: list[str] = field(default_factory=list)  # 多视角子问题（v2）
 
 
 @dataclass
@@ -21,7 +22,29 @@ class ResearchPlan:
 
     title: str
     sections: list[PlanSection] = field(default_factory=list)
-    queries: list[str] = field(default_factory=list)
+    queries: list[str] = field(default_factory=list)  # 扁平化的检索子查询（供检索复用）
+
+
+@dataclass
+class Learning:
+    """逐源提炼出的一条「要点」（v2 核心）：干净事实 + 绑定来源号。
+
+    引用对齐提前到提炼阶段——写作时直接用带号要点，[来源N] 天然正确。
+    """
+
+    text: str  # 提炼后的干净要点（事实/数据/观点）
+    source_index: int  # 绑定的来源号（对应 Source.index）
+    date_hint: str = ""  # 提炼时识别到的时效（如 "2026-03"），无则空
+    relevance: float = 0.5  # 与研究主题相关度 0~1，低于阈值丢弃
+
+
+@dataclass
+class CuratedSection:
+    """大纲整理阶段产出：一个章节 + 核心论点 + 分配给它的要点编号。"""
+
+    heading: str
+    thesis: str = ""  # 本节核心论点（一句话，指导写作）
+    learning_ids: list[int] = field(default_factory=list)  # 分配的 Learning 全局编号（1 起）
 
 
 @dataclass

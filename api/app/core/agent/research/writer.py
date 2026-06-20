@@ -1,10 +1,14 @@
-"""研究写作：分章节撰写（带引用）+ 全文汇总 TL;DR / 核心要点。"""
+"""研究写作（Deep Research v2）：基于已提炼的要点分章节撰写 + 全文汇总。
+
+写作不再吃原始网页正文，而是吃 curator 分配好的「带来源号要点 Learning」+ 前文章节摘要，
+质量更稳、引用天然对齐、章节不重复。
+"""
 from collections.abc import AsyncGenerator
+from datetime import date
 
 from langchain_openai import ChatOpenAI
 
-from app.config import settings
-from app.core.agent.research.models import PlanSection, Source
+from app.core.agent.research.models import Learning
 from app.core.agent.research.prompt_renderer import render_research_prompt
 from app.core.logging import get_logger
 from app.core.memory.json_utils import parse_json_object
@@ -12,56 +16,29 @@ from app.core.memory.json_utils import parse_json_object
 logger = get_logger(__name__)
 
 
-def _char_bigrams(text: str) -> set[str]:
-    text = "".join(ch for ch in (text or "").lower() if ch.isalnum())
-    return {text[i : i + 2] for i in range(len(text) - 1)} if len(text) >= 2 else set()
-
-
-def pick_sources_for_section(
-    section: PlanSection, sources: list[Source], limit: int
-) -> list[Source]:
-    """为某章节挑选最相关的来源（字符 2-gram 重叠打分），不足则按原序补足。
-
-    保证每个章节都有资料可引用；打分只是排序，不会丢弃全部来源。
-    """
-    if not sources:
-        return []
-    key = _char_bigrams(f"{section.heading} {section.points}")
-    if not key:
-        return sources[:limit]
-    scored = []
-    for s in sources:
-        sig = _char_bigrams(f"{s.title} {s.content[:500]}")
-        overlap = len(key & sig)
-        scored.append((overlap, s))
-    scored.sort(key=lambda x: x[0], reverse=True)
-    return [s for _, s in scored[:limit]]
-
-
-def _source_payload(sources: list[Source]) -> list[dict]:
+def _learning_payload(learnings: list[Learning]) -> list[dict]:
     return [
-        {"index": s.index, "title": s.title, "content": s.content} for s in sources
+        {"text": le.text, "source_index": le.source_index, "date_hint": le.date_hint}
+        for le in learnings
     ]
 
 
 async def write_section_stream(
     model: ChatOpenAI,
     report_title: str,
-    section: PlanSection,
-    sources: list[Source],
+    heading: str,
+    thesis: str,
+    learnings: list[Learning],
+    prev_summaries: list[str],
 ) -> AsyncGenerator[str, None]:
-    """流式撰写一个章节，逐 token 产出。失败时产出占位说明（不中断整篇）。"""
-    from datetime import date
-
-    picked = pick_sources_for_section(
-        section, sources, settings.research_section_context_sources
-    )
+    """流式撰写一个章节（基于分配的要点 + 前文摘要）。失败产出占位说明，不中断整篇。"""
     prompt = render_research_prompt(
         "write_section.jinja2",
         report_title=report_title,
-        heading=section.heading,
-        points=section.points,
-        sources=_source_payload(picked),
+        heading=heading,
+        thesis=thesis,
+        learnings=_learning_payload(learnings),
+        prev_summaries=prev_summaries,
         today=date.today().isoformat(),
     )
     got = False
@@ -73,7 +50,7 @@ async def write_section_stream(
                     got = True
                     yield text
     except Exception as e:
-        logger.warning("章节撰写失败: heading=%s err=%s", section.heading, e)
+        logger.warning("章节撰写失败: heading=%s err=%s", heading, e)
         if not got:
             yield f"（本章节生成失败：{e}）"
 
@@ -98,4 +75,4 @@ async def summarize(model: ChatOpenAI, report_title: str, body: str) -> dict:
     return {"tldr": tldr, "key_points": key_points}
 
 
-__all__ = ["pick_sources_for_section", "write_section_stream", "summarize"]
+__all__ = ["write_section_stream", "summarize"]

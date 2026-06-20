@@ -18,6 +18,7 @@ import {
   ClockCircleOutlined,
   DeleteOutlined,
   EditOutlined,
+  HighlightOutlined,
   PlusOutlined,
   ThunderboltOutlined,
 } from '@ant-design/icons'
@@ -29,6 +30,7 @@ import {
   type AgentTaskUpsert,
   type TriggerType,
 } from '@/api/agentTask'
+import { researchApi } from '@/api/research'
 
 const { TextArea } = Input
 
@@ -54,6 +56,7 @@ export default function AgentTaskPage() {
   const [loading, setLoading] = useState(false)
   const [modalOpen, setModalOpen] = useState(false)
   const [editing, setEditing] = useState<AgentTask | null>(null)
+  const [polishing, setPolishing] = useState(false)
   const [form] = Form.useForm()
   const triggerType = Form.useWatch('trigger_type', form) as TriggerType | undefined
 
@@ -141,6 +144,24 @@ export default function AgentTaskPage() {
       message.success('已触发运行，稍后在深度研究里查看报告')
     } catch (err) {
       message.error((err as { message?: string })?.message || '触发失败')
+    }
+  }
+
+  const polish = async () => {
+    const raw = (form.getFieldValue('instruction') as string | undefined)?.trim()
+    if (!raw) {
+      message.warning('请先填写研究指令再润色')
+      return
+    }
+    setPolishing(true)
+    try {
+      const res = await researchApi.optimizeTopic(raw)
+      form.setFieldValue('instruction', res.data.optimized)
+      message.success('已润色')
+    } catch (err) {
+      message.error((err as { message?: string })?.message || '润色失败')
+    } finally {
+      setPolishing(false)
     }
   }
 
@@ -245,7 +266,21 @@ export default function AgentTaskPage() {
           </Form.Item>
           <Form.Item
             name="instruction"
-            label="研究指令"
+            label={
+              <span style={{ display: 'inline-flex', alignItems: 'center', gap: 8 }}>
+                研究指令
+                <Button
+                  size="small"
+                  type="link"
+                  icon={<HighlightOutlined />}
+                  loading={polishing}
+                  onClick={polish}
+                  style={{ padding: 0, height: 'auto', fontSize: 12 }}
+                >
+                  AI 润色
+                </Button>
+              </span>
+            }
             rules={[{ required: true, message: '请输入研究指令' }]}
             extra="到点会把这句话当作研究主题，自动跑一遍深度研究"
           >

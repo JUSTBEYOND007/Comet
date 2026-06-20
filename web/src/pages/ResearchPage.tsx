@@ -19,6 +19,7 @@ import {
   DownOutlined,
   FileSearchOutlined,
   GlobalOutlined,
+  HighlightOutlined,
   PlusOutlined,
   SaveOutlined,
   UnorderedListOutlined,
@@ -41,7 +42,6 @@ const { TextArea } = Input
 const EXAMPLES = [
   '调研 AI Agent / 大模型开发岗秋招：在招公司、岗位要求与投递链接',
   '梳理大模型应用开发岗面试高频考点与准备路径',
-  '盘点 2025 国内大模型 Agent 创业公司与融资情况',
   '对比主流向量数据库的选型要点与适用场景',
 ]
 
@@ -51,6 +51,9 @@ const PHASE_LABEL: Record<string, string> = {
   planning: '规划中',
   searching: '检索中',
   searching_done: '检索中',
+  distilling: '提炼中',
+  reflecting: '反思补搜',
+  curating: '整理大纲',
   writing: '撰写中',
   summarizing: '汇总中',
 }
@@ -67,6 +70,7 @@ const STEP_ICON: Record<string, string> = {
   fetch: '📄',
   kb: '📚',
   mcp: '🔧',
+  distill: '✨',
   stage: '🧭',
   write: '✍️',
 }
@@ -77,6 +81,7 @@ export default function ResearchPage() {
   const [topic, setTopic] = useState('')
   const [running, setRunning] = useState(false)
   const [currentId, setCurrentId] = useState<string | null>(null)
+  const [polishing, setPolishing] = useState(false)
   const [saving, setSaving] = useState(false)
 
   // 流式状态
@@ -151,7 +156,11 @@ export default function ResearchPage() {
       setPhase(d.phase)
       setStatusDetail(d.detail)
       // 阶段切换也作为一条活动记录，让流程更连贯
-      if (d.phase === 'writing' || d.phase === 'summarizing' || d.phase === 'planning') {
+      if (
+        ['writing', 'summarizing', 'planning', 'distilling', 'reflecting', 'curating'].includes(
+          d.phase,
+        )
+      ) {
         setSteps((s) => [...s, { icon: 'stage', ok: true, text: d.detail }])
       }
     },
@@ -185,6 +194,25 @@ export default function ResearchPage() {
       setRunning(false)
     },
   })
+
+  const polishTopic = async () => {
+    const raw = topic.trim()
+    if (!raw) {
+      message.warning('请先输入研究主题再润色')
+      return
+    }
+    if (polishing || running) return
+    setPolishing(true)
+    try {
+      const res = await researchApi.optimizeTopic(raw)
+      setTopic(res.data.optimized)
+      message.success('已润色')
+    } catch (err) {
+      message.error((err as { message?: string })?.message || '润色失败')
+    } finally {
+      setPolishing(false)
+    }
+  }
 
   const startResearch = async () => {
     const t = topic.trim()
@@ -404,6 +432,18 @@ export default function ResearchPage() {
             </p>
 
             <div className="research-hero-input">
+              <div style={{ display: 'flex', justifyContent: 'flex-end', marginBottom: 6 }}>
+                <Button
+                  type="text"
+                  size="small"
+                  icon={<HighlightOutlined />}
+                  loading={polishing}
+                  onClick={polishTopic}
+                  style={{ fontSize: 13 }}
+                >
+                  AI 润色
+                </Button>
+              </div>
               <TextArea
                 value={topic}
                 onChange={(e) => setTopic(e.target.value)}
@@ -558,18 +598,21 @@ export default function ResearchPage() {
                 title={reportTitle || '研究报告'}
                 extra={
                   canManage && (
-                    <Space>
-                      <Tooltip title="下载 Markdown">
-                        <Button size="small" icon={<DownloadOutlined />} onClick={downloadMd} />
-                      </Tooltip>
-                      <Tooltip title="存入「深度研究报告」知识库">
-                        <Button
-                          size="small"
-                          icon={<SaveOutlined />}
-                          loading={saving}
-                          onClick={saveToKb}
-                        />
-                      </Tooltip>
+                    <Space size="small">
+                      <Button
+                        icon={<DownloadOutlined />}
+                        onClick={downloadMd}
+                      >
+                        下载
+                      </Button>
+                      <Button
+                        type="primary"
+                        icon={<SaveOutlined />}
+                        loading={saving}
+                        onClick={saveToKb}
+                      >
+                        存入知识库
+                      </Button>
                     </Space>
                   )
                 }

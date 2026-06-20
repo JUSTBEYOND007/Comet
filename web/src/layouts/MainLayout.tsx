@@ -1,4 +1,4 @@
-import { Avatar, Button, Drawer, Dropdown, Input, Layout, Menu, Space, message } from 'antd'
+import { Avatar, Badge, Button, Drawer, Dropdown, Input, Layout, Menu, Space, message } from 'antd'
 import {
   AppstoreOutlined,
   BookOutlined,
@@ -31,6 +31,7 @@ import { Outlet, useLocation, useNavigate } from 'react-router-dom'
 import { useAuthStore } from '@/stores/authStore'
 import { useChatHeaderStore } from '@/stores/chatHeaderStore'
 import { useGroupHeaderStore } from '@/stores/groupHeaderStore'
+import { agentTaskApi } from '@/api/agentTask'
 import { AuthenticatedImage } from '@/components/AuthenticatedImage'
 import MusicPlayer from '@/components/MusicPlayer'
 import logo from '@/images/logo.png'
@@ -129,6 +130,26 @@ export default function MainLayout() {
     setDrawerOpen(false)
   }, [location.pathname])
 
+  // 定时任务未读红点：轮询 + 路由切换时刷新（离开任务页 mark-seen 后归零）
+  const [unreadTasks, setUnreadTasks] = useState(0)
+  useEffect(() => {
+    let alive = true
+    const fetchUnread = () => {
+      agentTaskApi
+        .unreadCount()
+        .then(({ data }) => {
+          if (alive) setUnreadTasks(data.count)
+        })
+        .catch(() => {})
+    }
+    fetchUnread()
+    const timer = window.setInterval(fetchUnread, 60000)
+    return () => {
+      alive = false
+      clearInterval(timer)
+    }
+  }, [location.pathname])
+
   // 音乐页沉浸式深色主题：进入 /music 整体变深色霓虹，离开自动恢复
   const immersive = location.pathname === '/music'
 
@@ -164,17 +185,39 @@ export default function MainLayout() {
     </div>
   )
 
-  const navMenu = (mini: boolean) => (
-    <Menu
-      mode="inline"
-      theme={immersive ? 'dark' : 'light'}
-      inlineCollapsed={mini}
-      selectedKeys={[location.pathname]}
-      items={menuItems}
-      onClick={({ key }) => navigate(key)}
-      style={{ borderInlineEnd: 'none', background: 'transparent' }}
-    />
-  )
+  const navMenu = (mini: boolean) => {
+    // 给「定时任务」注入未读红点（不改全局静态 menuItems）
+    const items = menuItems.map((group) =>
+      'children' in group
+        ? {
+            ...group,
+            children: group.children.map((it) =>
+              it.key === '/agent-tasks' && unreadTasks > 0 && !mini
+                ? {
+                    ...it,
+                    label: (
+                      <Badge count={unreadTasks} size="small" offset={[10, 0]}>
+                        <span>{it.label}</span>
+                      </Badge>
+                    ),
+                  }
+                : it,
+            ),
+          }
+        : group,
+    )
+    return (
+      <Menu
+        mode="inline"
+        theme={immersive ? 'dark' : 'light'}
+        inlineCollapsed={mini}
+        selectedKeys={[location.pathname]}
+        items={items}
+        onClick={({ key }) => navigate(key)}
+        style={{ borderInlineEnd: 'none', background: 'transparent' }}
+      />
+    )
+  }
 
   return (
     <Layout style={{ height: '100%' }} className={immersive ? 'immersive-layout' : ''}>

@@ -127,6 +127,13 @@ export default function ResearchPage() {
     return () => abortRef.current?.abort()
   }, [loadReports])
 
+  // 深链：?report=<id> 自动打开某份报告（来自任务运行历史/首页简报跳转）
+  useEffect(() => {
+    const id = new URLSearchParams(window.location.search).get('report')
+    if (id) openReport(id)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
+
   const stepsRef = useRef<HTMLDivElement>(null)
 
   // 流式时自动滚到底部
@@ -351,6 +358,24 @@ export default function ResearchPage() {
   }
 
   const printReport = () => {
+    // 把已渲染的报告正文克隆到 body 顶层再打印：脱离页面的滚动/定高容器，
+    // 内容才能正常跨多页分页（直接 window.print 会被 overflow 容器裁成一页）。
+    const src = document.querySelector('.research-print')
+    if (!src) {
+      window.print()
+      return
+    }
+    const holder = document.createElement('div')
+    holder.id = 'print-root'
+    holder.innerHTML = src.innerHTML
+    document.body.appendChild(holder)
+    document.body.classList.add('printing')
+    const cleanup = () => {
+      document.body.classList.remove('printing')
+      holder.remove()
+      window.removeEventListener('afterprint', cleanup)
+    }
+    window.addEventListener('afterprint', cleanup)
     window.print()
   }
 

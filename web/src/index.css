@@ -5272,25 +5272,35 @@ body {
   display: none;
 }
 
-/* 打印 / 存为 PDF：只保留报告正文，隐藏导航与其他界面 */
+/* 打印用的克隆容器：平时隐藏，打印时挂到 body 顶层（脱离滚动/定高容器，正常分页） */
+#print-root {
+  display: none;
+}
+
 @media print {
-  body * {
-    visibility: hidden;
+  /* 打印时隐藏整个应用，只渲染克隆出来的报告（在正常文档流中，可跨多页） */
+  body.printing #root {
+    display: none !important;
   }
-  .research-print,
-  .research-print * {
-    visibility: visible;
+  body.printing #print-root {
+    display: block !important;
+    padding: 0;
+    color: #1d2129;
   }
-  .research-print {
-    position: absolute;
-    left: 0;
-    top: 0;
-    width: 100%;
-    padding: 0 8mm;
-  }
-  .research-print-title {
+  body.printing #print-root .research-print-title {
     display: block;
     font-size: 22px;
-    margin: 0 0 12px;
+    font-weight: 700;
+    margin: 0 0 14px;
+  }
+  body.printing #print-root img {
+    max-width: 100%;
+  }
+  body.printing #print-root pre,
+  body.printing #print-root table {
+    page-break-inside: avoid;
+  }
+  @page {
+    margin: 16mm;
   }
 }

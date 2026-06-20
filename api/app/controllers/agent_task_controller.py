@@ -22,6 +22,25 @@ async def list_tasks(
     return success(await AgentTaskService(session).list_tasks(user.id))
 
 
+@router.get("/unread-count")
+async def unread_count(
+    user: User = Depends(get_current_user),
+    session: AsyncSession = Depends(get_session),
+):
+    """未读定时报告数（菜单红点用）。"""
+    return success({"count": await AgentTaskService(session).unread_count(user.id)})
+
+
+@router.post("/mark-seen")
+async def mark_seen(
+    user: User = Depends(get_current_user),
+    session: AsyncSession = Depends(get_session),
+):
+    """标记简报已读（清红点）。"""
+    await AgentTaskService(session).mark_seen(user.id)
+    return success(message="ok")
+
+
 @router.post("")
 async def create_task(
     body: AgentTaskUpsertRequest,
@@ -62,6 +81,16 @@ async def run_now(
 ):
     await AgentTaskService(session).run_now(user.id, task_id)
     return success(message="已触发运行，稍后在深度研究里查看报告")
+
+
+@router.get("/{task_id}/runs")
+async def list_runs(
+    task_id: uuid.UUID,
+    user: User = Depends(get_current_user),
+    session: AsyncSession = Depends(get_session),
+):
+    """某任务的运行历史（复用研究报告 task_id 关联）。"""
+    return success(await AgentTaskService(session).list_runs(user.id, task_id))
 
 
 @router.delete("/{task_id}")

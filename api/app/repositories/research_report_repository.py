@@ -49,6 +49,37 @@ class ResearchReportRepository:
         )
         return list(result.scalars().all()), int(total or 0)
 
+    async def list_by_task(
+        self, user_id: uuid.UUID, task_id: uuid.UUID, limit: int = 30
+    ) -> list[ResearchReport]:
+        """某定时任务的运行历史（按时间倒序）。"""
+        stmt = (
+            select(ResearchReport)
+            .where(
+                ResearchReport.user_id == user_id,
+                ResearchReport.task_id == task_id,
+            )
+            .order_by(ResearchReport.created_at.desc())
+            .limit(limit)
+        )
+        return list((await self.session.execute(stmt)).scalars().all())
+
+    async def count_unread_scheduled(
+        self, user_id: uuid.UUID, since
+    ) -> int:
+        """统计「定时任务产出且已完成」、created_at 晚于 since 的报告数（未读红点用）。
+
+        since 为 None 时视为全部未读（用户从未看过简报）。
+        """
+        stmt = select(func.count()).select_from(ResearchReport).where(
+            ResearchReport.user_id == user_id,
+            ResearchReport.task_id.isnot(None),
+            ResearchReport.status == "done",
+        )
+        if since is not None:
+            stmt = stmt.where(ResearchReport.created_at > since)
+        return int(await self.session.scalar(stmt) or 0)
+
     async def delete(self, report: ResearchReport) -> None:
         await self.session.delete(report)
         await self.session.commit()

@@ -35,6 +35,14 @@ export interface AgentTaskUpsert {
   enabled: boolean
 }
 
+export interface AgentTaskRun {
+  id: string
+  title: string
+  status: 'pending' | 'planning' | 'searching' | 'writing' | 'summarizing' | 'done' | 'failed'
+  error_msg: string | null
+  created_at: string | null
+}
+
 export const agentTaskApi = {
   list() {
     return client.get<unknown, Wrapped<AgentTask[]>>('/agent-tasks')
@@ -55,5 +63,14 @@ export const agentTaskApi = {
   },
   remove(id: string) {
     return client.delete<unknown, Wrapped<null>>(`/agent-tasks/${id}`)
+  },
+  runs(id: string) {
+    return client.get<unknown, Wrapped<AgentTaskRun[]>>(`/agent-tasks/${id}/runs`)
+  },
+  unreadCount() {
+    return client.get<unknown, Wrapped<{ count: number }>>('/agent-tasks/unread-count')
+  },
+  markSeen() {
+    return client.post<unknown, Wrapped<null>>('/agent-tasks/mark-seen')
   },
 }

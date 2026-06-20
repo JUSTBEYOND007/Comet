@@ -3,10 +3,12 @@ import {
   App,
   Button,
   Card,
+  Drawer,
   Empty,
   Form,
   Input,
   InputNumber,
+  List,
   Modal,
   Select,
   Switch,
@@ -19,6 +21,7 @@ import {
   DeleteOutlined,
   EditOutlined,
   HighlightOutlined,
+  HistoryOutlined,
   PlusOutlined,
   ThunderboltOutlined,
 } from '@ant-design/icons'
@@ -27,6 +30,7 @@ import { useNavigate } from 'react-router-dom'
 import {
   agentTaskApi,
   type AgentTask,
+  type AgentTaskRun,
   type AgentTaskUpsert,
   type TriggerType,
 } from '@/api/agentTask'
@@ -57,6 +61,10 @@ export default function AgentTaskPage() {
   const [modalOpen, setModalOpen] = useState(false)
   const [editing, setEditing] = useState<AgentTask | null>(null)
   const [polishing, setPolishing] = useState(false)
+  const [runsOpen, setRunsOpen] = useState(false)
+  const [runsTask, setRunsTask] = useState<AgentTask | null>(null)
+  const [runs, setRuns] = useState<AgentTaskRun[]>([])
+  const [runsLoading, setRunsLoading] = useState(false)
   const [form] = Form.useForm()
   const triggerType = Form.useWatch('trigger_type', form) as TriggerType | undefined
 
@@ -74,7 +82,24 @@ export default function AgentTaskPage() {
 
   useEffect(() => {
     load()
+    // 进页即标记简报已读，清菜单红点
+    agentTaskApi.markSeen().catch(() => {})
   }, [load])
+
+  const openRuns = async (t: AgentTask) => {
+    setRunsTask(t)
+    setRunsOpen(true)
+    setRunsLoading(true)
+    setRuns([])
+    try {
+      const { data } = await agentTaskApi.runs(t.id)
+      setRuns(data)
+    } catch (e) {
+      message.error((e as { message?: string })?.message || '加载历史失败')
+    } finally {
+      setRunsLoading(false)
+    }
+  }
 
   const openCreate = () => {
     setEditing(null)
@@ -237,6 +262,9 @@ export default function AgentTaskPage() {
                 <Button size="small" icon={<ThunderboltOutlined />} onClick={() => runNow(t)}>
                   立即运行
                 </Button>
+                <Button size="small" icon={<HistoryOutlined />} onClick={() => openRuns(t)}>
+                  历史
+                </Button>
                 <Button size="small" icon={<EditOutlined />} onClick={() => openEdit(t)} />
                 <Button size="small" danger icon={<DeleteOutlined />} onClick={() => remove(t)} />
               </div>
@@ -325,6 +353,75 @@ export default function AgentTaskPage() {
           </Form.Item>
         </Form>
       </Modal>
+
+      <Drawer
+        title={runsTask ? `运行历史 · ${runsTask.name}` : '运行历史'}
+        open={runsOpen}
+        onClose={() => setRunsOpen(false)}
+        width={420}
+        extra={
+          runsTask && (
+            <Button
+              type="primary"
+              size="small"
+              icon={<ThunderboltOutlined />}
+              onClick={() => runNow(runsTask)}
+            >
+              立即运行一次
+            </Button>
+          )
+        }
+      >
+        <List
+          loading={runsLoading}
+          locale={{ emptyText: '还没有运行记录，点「立即运行一次」试试' }}
+          dataSource={runs}
+          renderItem={(r) => (
+            <List.Item
+              style={{ cursor: r.status === 'done' ? 'pointer' : 'default' }}
+              onClick={() => {
+                if (r.status === 'done') navigate(`/research?report=${r.id}`)
+              }}
+            >
+              <List.Item.Meta
+                title={
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                    <span style={{ flex: 1, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                      {r.title}
+                    </span>
+                    {r.status === 'done' && <Tag color="success">完成</Tag>}
+                    {r.status === 'failed' && <Tag color="error">失败</Tag>}
+                    {!['done', 'failed'].includes(r.status) && <Tag color="processing">运行中</Tag>}
+                  </div>
+                }
+                description={
+                  <div style={{ fontSize: 12 }}>
+                    <span style={{ color: '#98A2B3' }}>
+                      {r.created_at ? dayjs(r.created_at).format('MM-DD HH:mm') : '—'}
+                    </span>
+                    {r.status === 'failed' && r.error_msg && (
+                      <div style={{ color: '#FF5D34', marginTop: 4 }}>{r.error_msg}</div>
+                    )}
+                    {r.status === 'failed' && runsTask && (
+                      <Button
+                        type="link"
+                        size="small"
+                        style={{ padding: 0, marginTop: 2 }}
+                        onClick={(e) => {
+                          e.stopPropagation()
+                          runNow(runsTask)
+                        }}
+                      >
+                        重试
+                      </Button>
+                    )}
+                  </div>
+                }
+              />
+            </List.Item>
+          )}
+        />
+      </Drawer>
     </div>
   )
 }

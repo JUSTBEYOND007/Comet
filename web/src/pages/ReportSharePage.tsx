@@ -57,7 +57,7 @@ export default function ReportSharePage() {
           </div>
         </div>
 
-        <div className="share-body" style={{ padding: '8px 4px' }}>
+        <div className="share-body" style={{ padding: '24px 32px' }}>
           <MarkdownMessage content={data.markdown} />
         </div>
 

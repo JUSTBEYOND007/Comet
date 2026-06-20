@@ -35,9 +35,10 @@ export default function HumanBubbles({
     const playable = streaming ? Math.max(0, segLen - 1) : segLen
     if (shown >= playable) return
     const nextText = segsRef.current[shown] || ''
-    // 第一条前先「思考」一下；之后每条按字数算打字时间（短句也至少 ~0.9s，长句最多 ~3s）
-    const base = shown === 0 ? 900 : 700
-    const delay = Math.min(3000, base + nextText.length * 70)
+    // 首条立即出：后端首字延迟期间已经显示过「正在输入…」垫了等待，不再额外停顿；
+    // 只有第 2 条往后才按字数算「打字」停顿，营造真人连发感
+    const delay =
+      shown === 0 ? 150 : Math.min(3000, 600 + nextText.length * 70)
     const t = window.setTimeout(() => setShown((s) => s + 1), delay)
     return () => clearTimeout(t)
   }, [shown, segLen, streaming, instant])

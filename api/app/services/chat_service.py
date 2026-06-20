@@ -14,7 +14,7 @@ from langchain_core.messages import AIMessage, HumanMessage, SystemMessage
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.agent.orchestrator import run_function_calling, run_react
-from app.core.agent.tools import build_enabled_tools, build_enabled_tools_cm
+from app.core.agent.tools import build_enabled_tools
 from app.core.realtime import bus
 from app.core.llm.chat_model import (
     build_chat_model,
@@ -603,44 +603,46 @@ class ChatService:
                 yield {"type": "citation", "citations": citations}
             return
 
-        # 非多模态：在「持久 MCP 会话」上下文里构建工具并跑编排，
-        # 整轮工具调用复用同一批 MCP 会话，不重复握手（退出自动关会话）。
+        # 非多模态：构建工具（内置 + 带 TTL 缓存的 MCP 工具清单）并跑编排。
+        # 用无状态 build_enabled_tools（而非每轮预开 MCP 会话的 _cm 版）：MCP 工具清单走
+        # 进程内缓存、不预握手，只有模型真正调用某个 MCP 工具时才连接——闲聊/只用内置工具
+        # 的轮次零 MCP 握手，大幅降低首字延迟。
         overrides, kb_ids = await self._tool_scope(user_id, body, skill)
-        async with build_enabled_tools_cm(
+        tools = await build_enabled_tools(
             self.session, user_id, citations, overrides, stats_holder, kb_ids
-        ) as tools:
-            system_prompt = await _assemble_prompt(has_tools=bool(tools))
-            if not tools:
-                # 无工具：纯流式
-                lc_messages: list = []
-                if system_prompt:
-                    lc_messages.append(SystemMessage(content=system_prompt))
-                lc_messages.extend(history)
-                lc_messages.append(HumanMessage(content=composed_text))
-                async for chunk in model.astream(lc_messages):
-                    if chunk.content:
-                        yield {"type": "token", "text": chunk.content}
-            elif supports_function_call(config):
-                # 强模型：原生 function calling
-                lc_messages = []
-                if system_prompt:
-                    lc_messages.append(SystemMessage(content=system_prompt))
-                lc_messages.extend(history)
-                lc_messages.append(HumanMessage(content=composed_text))
-                async for ev in run_function_calling(
-                    model, tools, lc_messages, stats_holder=stats_holder
-                ):
-                    yield ev
-            else:
-                # 弱模型：ReAct
-                async for ev in run_react(
-                    model, tools, composed_text, history, system_prompt,
-                    stats_holder=stats_holder,
-                ):
-                    yield ev
+        )
+        system_prompt = await _assemble_prompt(has_tools=bool(tools))
+        if not tools:
+            # 无工具：纯流式
+            lc_messages: list = []
+            if system_prompt:
+                lc_messages.append(SystemMessage(content=system_prompt))
+            lc_messages.extend(history)
+            lc_messages.append(HumanMessage(content=composed_text))
+            async for chunk in model.astream(lc_messages):
+                if chunk.content:
+                    yield {"type": "token", "text": chunk.content}
+        elif supports_function_call(config):
+            # 强模型：原生 function calling
+            lc_messages = []
+            if system_prompt:
+                lc_messages.append(SystemMessage(content=system_prompt))
+            lc_messages.extend(history)
+            lc_messages.append(HumanMessage(content=composed_text))
+            async for ev in run_function_calling(
+                model, tools, lc_messages, stats_holder=stats_holder
+            ):
+                yield ev
+        else:
+            # 弱模型：ReAct
+            async for ev in run_react(
+                model, tools, composed_text, history, system_prompt,
+                stats_holder=stats_holder,
+            ):
+                yield ev
 
-            if citations:
-                yield {"type": "citation", "citations": citations}
+        if citations:
+            yield {"type": "citation", "citations": citations}
 
     async def _save_partial_on_error(
         self,

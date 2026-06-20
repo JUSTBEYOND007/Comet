@@ -263,17 +263,18 @@ uv run alembic upgrade head                          # 应用
 
 耗时操作（文档解析、记忆萃取、情绪分析、歌曲处理、社区聚类）走异步队列，接口立即返回。
 
-队列规划：`parse`（解析 / 图片 / 歌曲处理）、`memory`（记忆萃取 / 情绪分析）、`beat`（定时：每日回顾 / 全量聚类 / 记忆巩固）、`default`。
+队列规划：`parse`（解析 / 图片 / 歌曲处理）、`memory`（记忆萃取 / 情绪分析）、`beat`（定时：每日回顾 / 全量聚类 / 记忆巩固 / 定时任务调度心跳）、`research`（定时任务的深度研究执行，重活独立队列，避免堵住心跳）、`default`。
 
 ```bash
 # Worker（Windows 必须 --pool=solo）
-uv run celery -A app.celery_app.celery_app worker -l info -Q default,parse,memory,beat --pool=solo
+uv run celery -A app.celery_app.celery_app worker -l info -Q default,parse,memory,beat,research --pool=solo
 
 # Beat 定时（每日 22:00 回顾、03:00 全量聚类、04:00 记忆巩固）
 uv run celery -A app.celery_app.celery_app beat -l info
 ```
 
 > Linux / macOS 去掉 `--pool=solo`，用 `--concurrency=N` 提并发。
+> `research` 队列与 `beat`（调度心跳）分开：心跳轻量不可被堵，研究是重活。线程/prefork 并发≥2 时二者可并存；Windows `--pool=solo` 单进程串行，可再起一个 `-Q research` 的 worker 让心跳独立。
 > 新增/改动 `tasks/` 下的任务后需重启 worker 才会加载。
 
 ---

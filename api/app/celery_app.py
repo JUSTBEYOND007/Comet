@@ -1,9 +1,10 @@
 """Celery 应用：标准多队列配置（不做自研调度器）。
 
 队列规划：
-- parse    文档解析 / 图片描述
-- memory   记忆三元组萃取 / 去重
-- beat     社区聚类 / 每日回顾（由 beat 定时触发）
+- parse     文档解析 / 图片描述
+- memory    记忆三元组萃取 / 去重
+- beat      社区聚类 / 每日回顾 / 定时任务心跳（轻量、不可被重活堵住）
+- research  定时任务的深度研究执行（重活，单独队列，避免堵住调度心跳）
 """
 from celery import Celery
 from celery.schedules import crontab
@@ -41,7 +42,9 @@ celery_app.conf.update(
         "app.tasks.emotion.*": {"queue": "memory"},
         "app.tasks.music.*": {"queue": "parse"},
         "app.tasks.beat.*": {"queue": "beat"},
-        "app.tasks.agent_task.*": {"queue": "beat"},
+        # 调度心跳留 beat 队列（轻量）；研究执行进独立 research 队列，避免长任务堵死心跳
+        "app.tasks.agent_task.heartbeat": {"queue": "beat"},
+        "app.tasks.agent_task.run": {"queue": "research"},
     },
     # Celery beat 定时
     beat_schedule={

@@ -42,11 +42,19 @@ class AgentTaskRepository:
         return list((await self.session.execute(stmt)).scalars().all())
 
     async def list_due(self) -> list[AgentTask]:
-        """心跳：取所有启用且已到下次运行时间的任务（跨用户）。"""
-        stmt = select(AgentTask).where(
-            AgentTask.enabled.is_(True),
-            AgentTask.next_run_at.isnot(None),
-            AgentTask.next_run_at <= func.now(),
+        """心跳：取所有启用且已到下次运行时间的任务（跨用户）。
+
+        加 FOR UPDATE SKIP LOCKED：即便误起多个 beat，也不会同时抢到同一行重复触发；
+        调用方需在同一事务内推进 next_run_at 后提交（保存即提交，释放行锁）。
+        """
+        stmt = (
+            select(AgentTask)
+            .where(
+                AgentTask.enabled.is_(True),
+                AgentTask.next_run_at.isnot(None),
+                AgentTask.next_run_at <= func.now(),
+            )
+            .with_for_update(skip_locked=True)
         )
         return list((await self.session.execute(stmt)).scalars().all())
 

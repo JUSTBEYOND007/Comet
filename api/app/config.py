@@ -145,6 +145,9 @@ class Settings(BaseSettings):
     research_source_quality_filter: bool = True  # 是否启用来源质量打分排序
     research_min_source_chars: int = 120  # 联网源正文少于此值视为抓取失败/登录墙，丢弃
 
+    # 定时任务执行（单次研究的整体硬超时，防卡死任务长期占住 worker；跨平台用 asyncio.wait_for）
+    research_task_timeout: int = 900  # 单次定时研究整体超时（秒）
+
     @property
     def database_url(self) -> str:
         return (

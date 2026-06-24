@@ -110,6 +110,8 @@ class Settings(BaseSettings):
     active_recall_entity_top_k: int = 5  # 召回实体数
     active_recall_insight_top_k: int = 2  # 召回洞察数
     active_recall_min_score: float = 0.5  # 实体召回余弦门控（低于不注入，节流防噪声）
+    active_recall_min_confidence: float = 0.6  # 低于此置信度的记忆不进入回答侧主动召回
+    active_recall_uncertain_confidence: float = 0.75  # 低于此置信度的记忆注入时标为待确认
     active_recall_max_chars: int = 600  # 注入背景块长度上限
 
     # 跨会话上下文（注入最近其他会话的摘要，默认关）

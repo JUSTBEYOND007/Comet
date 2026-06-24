@@ -14,10 +14,12 @@ import {
   message,
 } from 'antd'
 import {
+  CheckCircleOutlined,
   BulbOutlined,
   ClockCircleOutlined,
   ClusterOutlined,
   DeleteOutlined,
+  ExclamationCircleOutlined,
   PlusOutlined,
   ReloadOutlined,
   SearchOutlined,
@@ -38,6 +40,49 @@ import {
 import { favoriteApi } from '@/api/favorites'
 
 const { Text, Paragraph } = Typography
+
+type TrustTone = 'high' | 'medium' | 'low'
+
+function trustTone(confidence?: number | null): TrustTone {
+  const value = typeof confidence === 'number' ? confidence : 0.8
+  if (value >= 0.85) return 'high'
+  if (value >= 0.75) return 'medium'
+  return 'low'
+}
+
+function trustLabel(confidence?: number | null) {
+  const tone = trustTone(confidence)
+  if (tone === 'high') return '高置信'
+  if (tone === 'medium') return '中置信'
+  return '待确认'
+}
+
+function trustColor(confidence?: number | null) {
+  const tone = trustTone(confidence)
+  if (tone === 'high') return 'success'
+  if (tone === 'medium') return 'processing'
+  return 'warning'
+}
+
+function trustPercent(confidence?: number | null) {
+  const value = typeof confidence === 'number' ? confidence : 0.8
+  return `${Math.round(Math.max(0, Math.min(1, value)) * 100)}%`
+}
+
+function TrustTag({ confidence }: { confidence?: number | null }) {
+  const low = trustTone(confidence) === 'low'
+  return (
+    <Tooltip title={`置信度 ${trustPercent(confidence)}`}>
+      <Tag
+        color={trustColor(confidence)}
+        icon={low ? <ExclamationCircleOutlined /> : <CheckCircleOutlined />}
+        style={{ margin: 0 }}
+      >
+        {trustLabel(confidence)}
+      </Tag>
+    </Tooltip>
+  )
+}
 
 export default function MemoryPage() {
   const [mode, setMode] = useState<'profile' | 'community' | 'timeline' | 'search'>('profile')
@@ -261,12 +306,18 @@ function ProfilePanel() {
                 }}
               >
                 {group.entities.map((ent) => (
-                  <Card key={ent.id} size="small" styles={{ body: { padding: 14 } }}>
+                  <Card
+                    key={ent.id}
+                    size="small"
+                    className={trustTone(ent.confidence) === 'low' ? 'memory-entity-card memory-entity-card--weak' : 'memory-entity-card'}
+                    styles={{ body: { padding: 14 } }}
+                  >
                     <div style={{ display: 'flex', justifyContent: 'space-between', gap: 8 }}>
-                      <Space size={4}>
+                      <Space size={4} wrap>
                         <Text strong style={{ fontSize: 15 }}>
                           {ent.name}
                         </Text>
+                        <TrustTag confidence={ent.confidence} />
                         {ent.memory_layer === 'long_term' && (
                           <Tag color="gold" style={{ fontSize: 11, lineHeight: '16px', margin: 0 }}>
                             长期
@@ -312,6 +363,11 @@ function ProfilePanel() {
                       <div style={{ marginTop: 8, paddingLeft: 8, borderLeft: '2px solid #EEF4FF' }}>
                         {ent.relations.slice(0, 4).map((rel, i) => (
                           <div key={i} style={{ fontSize: 12.5, color: '#475467', lineHeight: 1.8 }}>
+                            {trustTone(rel.confidence) === 'low' && (
+                              <Tag color="warning" style={{ marginRight: 6, fontSize: 11, lineHeight: '16px' }}>
+                                待确认
+                              </Tag>
+                            )}
                             <Text type="secondary">{rel.predicate}</Text> {rel.object_name}
                           </div>
                         ))}
@@ -433,6 +489,7 @@ function InsightsBanner() {
                   <Tag color="geekblue" style={{ margin: 0 }}>
                     {it.theme}
                   </Tag>
+                  <TrustTag confidence={it.confidence} />
                   <Popconfirm title="删除这条洞察？" onConfirm={() => onDelete(it.id)}>
                     <DeleteOutlined className="insight-del" />
                   </Popconfirm>
@@ -502,6 +559,7 @@ function SearchPanel() {
               <Space size="small" style={{ marginBottom: 6 }}>
                 <Text strong>{h.name}</Text>
                 <Tag color="blue">{h.type}</Tag>
+                <TrustTag confidence={h.confidence} />
                 <Tooltip title="相关度">
                   <Tag>{h.score}</Tag>
                 </Tooltip>
@@ -523,6 +581,11 @@ function SearchPanel() {
                 <div style={{ paddingLeft: 8, borderLeft: '2px solid #EEF4FF' }}>
                   {h.relations.map((rel, i) => (
                     <div key={i} style={{ fontSize: 13, color: '#475467' }}>
+                      {trustTone(rel.confidence) === 'low' && (
+                        <Tag color="warning" style={{ marginRight: 6, fontSize: 11, lineHeight: '16px' }}>
+                          待确认
+                        </Tag>
+                      )}
                       {h.name} <Text type="secondary">{rel.predicate}</Text> {rel.object_name}
                     </div>
                   ))}

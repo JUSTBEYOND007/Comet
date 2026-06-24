@@ -176,6 +176,7 @@ WHERE node.user_id = $user_id
 RETURN node.id AS id, node.name AS name, node.type AS type,
        node.description AS description, node.aliases AS aliases,
        coalesce(node.importance, 0.5) AS importance,
+       coalesce(node.confidence, 0.8) AS confidence,
        coalesce(node.memory_layer, 'short_term') AS memory_layer,
        score
 """
@@ -189,6 +190,7 @@ WHERE node.user_id = $user_id
 RETURN node.id AS id, node.name AS name, node.type AS type,
        node.description AS description, node.aliases AS aliases,
        coalesce(node.importance, 0.5) AS importance,
+       coalesce(node.confidence, 0.8) AS confidence,
        coalesce(node.memory_layer, 'short_term') AS memory_layer,
        score
 LIMIT $top_k
@@ -265,6 +267,8 @@ WHERE e.id IN $entity_ids
 OPTIONAL MATCH (e)-[r:RELATION]->(o:Entity)
 RETURN e.id AS entity_id, e.name AS entity_name,
        r.predicate AS predicate, r.source_text AS source_text,
+       coalesce(r.importance, 0.5) AS importance,
+       coalesce(r.confidence, 0.8) AS confidence,
        o.id AS object_id, o.name AS object_name, o.type AS object_type
 """
 
@@ -273,11 +277,18 @@ RETURN e.id AS entity_id, e.name AS entity_name,
 ENTITY_LIST_ALL = """
 MATCH (e:Entity {user_id: $user_id})
 OPTIONAL MATCH (e)-[r:RELATION]->(o:Entity)
-WITH e, collect({predicate: r.predicate, object_name: o.name, object_type: o.type}) AS rels
+WITH e, collect({
+  predicate: r.predicate,
+  object_name: o.name,
+  object_type: o.type,
+  confidence: coalesce(r.confidence, 0.8),
+  importance: coalesce(r.importance, 0.5)
+}) AS rels
 RETURN e.id AS id, e.name AS name, e.type AS type,
        e.description AS description, e.aliases AS aliases,
        e.created_at AS created_at,
        coalesce(e.importance, 0.5) AS importance,
+       coalesce(e.confidence, 0.8) AS confidence,
        coalesce(e.memory_layer, 'short_term') AS memory_layer,
        coalesce(e.access_count, 0) AS access_count,
        coalesce(e.mention_count, 1) AS mention_count,
@@ -637,5 +648,6 @@ CALL db.index.vector.queryNodes('insight_embedding_index', $top_k, $vector)
 YIELD node, score
 WHERE node.user_id = $user_id
 RETURN node.id AS id, node.theme AS theme, node.content AS content,
-       coalesce(node.importance, 0.6) AS importance, score
+       coalesce(node.importance, 0.6) AS importance,
+       coalesce(node.confidence, 0.7) AS confidence, score
 """

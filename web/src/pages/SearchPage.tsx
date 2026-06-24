@@ -10,10 +10,39 @@ import {
   Typography,
   message,
 } from 'antd'
-import { FileTextOutlined, HddOutlined, PictureOutlined } from '@ant-design/icons'
+import {
+  CheckCircleOutlined,
+  ExclamationCircleOutlined,
+  FileTextOutlined,
+  HddOutlined,
+  PictureOutlined,
+} from '@ant-design/icons'
 import { searchApi, type GlobalSearchResult } from '@/api/search'
 
 const { Text, Paragraph } = Typography
+
+function memoryTrustTone(confidence?: number | null) {
+  const value = typeof confidence === 'number' ? confidence : 0.8
+  if (value >= 0.85) return 'high'
+  if (value >= 0.75) return 'medium'
+  return 'low'
+}
+
+function MemoryTrustTag({ confidence }: { confidence?: number | null }) {
+  const tone = memoryTrustTone(confidence)
+  const label = tone === 'high' ? '高置信' : tone === 'medium' ? '中置信' : '待确认'
+  const color = tone === 'high' ? 'success' : tone === 'medium' ? 'processing' : 'warning'
+  const value = typeof confidence === 'number' ? confidence : 0.8
+  return (
+    <Tag
+      color={color}
+      icon={tone === 'low' ? <ExclamationCircleOutlined /> : <CheckCircleOutlined />}
+      style={{ marginLeft: 6 }}
+    >
+      {label} {Math.round(Math.max(0, Math.min(1, value)) * 100)}%
+    </Tag>
+  )
+}
 
 export default function SearchPage() {
   const [params, setParams] = useSearchParams()
@@ -133,6 +162,7 @@ export default function SearchPage() {
                 onClick={() => navigate('/memory')}
               >
                 <Text strong>{m.name}</Text> <Tag color="blue">{m.type}</Tag>
+                <MemoryTrustTag confidence={m.confidence} />
                 <Tag>{m.score}</Tag>
                 {m.description && (
                   <Paragraph type="secondary" style={{ margin: '4px 0 0', fontSize: 13 }} ellipsis={{ rows: 3 }}>

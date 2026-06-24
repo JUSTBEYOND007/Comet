@@ -4,6 +4,7 @@
 """
 import uuid
 
+from app.config import settings
 from app.core.llm.client import LLMClient
 from app.core.logging import get_logger
 from app.repositories.neo4j.memory_graph_repository import MemoryGraphRepository
@@ -16,6 +17,19 @@ _FULLTEXT_WEIGHT = 0.30
 _IMPORTANCE_WEIGHT = 0.15
 # 长期记忆轻微加权（更稳定的记忆优先）
 _LONG_TERM_BONUS = 0.05
+_LONG_TERM_RELIABILITY_WEIGHT = 1.1
+_DEFAULT_CONFIDENCE = 0.8
+
+
+def _float(value: object, default: float) -> float:
+    try:
+        return float(value if value is not None else default)
+    except (TypeError, ValueError):
+        return default
+
+
+def _layer_weight(memory_layer: str | None) -> float:
+    return _LONG_TERM_RELIABILITY_WEIGHT if memory_layer == "long_term" else 1.0
 
 
 def _normalize(scores: dict[str, float]) -> dict[str, float]:
@@ -28,6 +42,34 @@ def _normalize(scores: dict[str, float]) -> dict[str, float]:
     return {k: (v - lo) / (hi - lo) for k, v in scores.items()}
 
 
+def _rank_memory_hits(
+    hits: dict[str, dict],
+    semantic_scores: dict[str, float],
+    *,
+    top_k: int,
+    min_confidence: float | None,
+    use_reliability_score: bool,
+) -> list[tuple[str, float, float]]:
+    """Rank memory hits while preserving the original semantic score for callers."""
+    ranked: list[tuple[str, float, float]] = []
+    for eid, score in semantic_scores.items():
+        src = hits.get(eid) or {}
+        confidence = _float(src.get("confidence"), _DEFAULT_CONFIDENCE)
+        if min_confidence is not None and confidence < min_confidence:
+            continue
+        reliability_score = score
+        if use_reliability_score:
+            reliability_score = score * confidence * _layer_weight(src.get("memory_layer"))
+        ranked.append((eid, score, reliability_score))
+    ranked.sort(key=lambda x: x[2] if use_reliability_score else x[1], reverse=True)
+    return ranked[:top_k]
+
+
+def _is_uncertain(confidence: object, threshold: float | None = None) -> bool:
+    threshold = settings.active_recall_uncertain_confidence if threshold is None else threshold
+    return _float(confidence, _DEFAULT_CONFIDENCE) < threshold
+
+
 async def search_memory(
     *,
     embed_client: LLMClient,
@@ -36,6 +78,8 @@ async def search_memory(
     top_k: int = 10,
     recall_size: int = 20,
     min_vector_score: float | None = None,
+    min_confidence: float | None = None,
+    use_reliability_score: bool = False,
     query_vector: list[float] | None = None,
 ) -> list[dict]:
     """记忆检索：返回 top_k 个相关实体，每个带其一跳关系（关联事实）。
@@ -89,8 +133,16 @@ async def search_memory(
         }
         if not kept:
             return []
-        ranked = sorted(kept.items(), key=lambda x: x[1], reverse=True)[:top_k]
-        top_ids = [eid for eid, _ in ranked]
+        ranked = _rank_memory_hits(
+            all_hits,
+            kept,
+            top_k=top_k,
+            min_confidence=min_confidence,
+            use_reliability_score=use_reliability_score,
+        )
+        if not ranked:
+            return []
+        top_ids = [eid for eid, _, _ in ranked]
         try:
             await repo.bump_entity_access(uid, top_ids)
         except Exception as e:
@@ -105,9 +157,11 @@ async def search_memory(
                     "object_name": row.get("object_name"),
                     "object_type": row.get("object_type"),
                     "source_text": row.get("source_text"),
+                    "confidence": _float(row.get("confidence"), _DEFAULT_CONFIDENCE),
+                    "importance": _float(row.get("importance"), 0.5),
                 })
         results: list[dict] = []
-        for eid, score in ranked:
+        for eid, score, reliability_score in ranked:
             src = all_hits[eid]
             results.append({
                 "id": eid,
@@ -116,8 +170,10 @@ async def search_memory(
                 "description": src.get("description"),
                 "aliases": src.get("aliases") or [],
                 "importance": round(float(src.get("importance", 0.5) or 0.5), 3),
+                "confidence": round(_float(src.get("confidence"), _DEFAULT_CONFIDENCE), 3),
                 "memory_layer": src.get("memory_layer") or "short_term",
                 "score": round(score, 4),
+                "reliability_score": round(reliability_score, 4),
                 "relations": relations_by_entity.get(eid, []),
             })
         return results
@@ -129,12 +185,18 @@ async def search_memory(
         base = _VECTOR_WEIGHT * vec_n.get(eid, 0.0) + _FULLTEXT_WEIGHT * ft_n.get(eid, 0.0)
         importance = float(all_hits[eid].get("importance", 0.5) or 0.5)
         score = base + _IMPORTANCE_WEIGHT * importance
-        if (all_hits[eid].get("memory_layer") or "") == "long_term":
+        if not use_reliability_score and (all_hits[eid].get("memory_layer") or "") == "long_term":
             score += _LONG_TERM_BONUS
         fused[eid] = score
 
-    ranked = sorted(fused.items(), key=lambda x: x[1], reverse=True)[:top_k]
-    top_ids = [eid for eid, _ in ranked]
+    ranked = _rank_memory_hits(
+        all_hits,
+        fused,
+        top_k=top_k,
+        min_confidence=min_confidence,
+        use_reliability_score=use_reliability_score,
+    )
+    top_ids = [eid for eid, _, _ in ranked]
 
     # 命中回写：access_count +1、last_access_at（失败不影响检索）
     try:
@@ -153,10 +215,12 @@ async def search_memory(
                 "object_name": row.get("object_name"),
                 "object_type": row.get("object_type"),
                 "source_text": row.get("source_text"),
+                "confidence": _float(row.get("confidence"), _DEFAULT_CONFIDENCE),
+                "importance": _float(row.get("importance"), 0.5),
             })
 
     results: list[dict] = []
-    for eid, score in ranked:
+    for eid, score, reliability_score in ranked:
         src = all_hits[eid]
         results.append({
             "id": eid,
@@ -165,8 +229,10 @@ async def search_memory(
             "description": src.get("description"),
             "aliases": src.get("aliases") or [],
             "importance": round(float(src.get("importance", 0.5) or 0.5), 3),
+            "confidence": round(_float(src.get("confidence"), _DEFAULT_CONFIDENCE), 3),
             "memory_layer": src.get("memory_layer") or "short_term",
             "score": round(score, 4),
+            "reliability_score": round(reliability_score, 4),
             "relations": relations_by_entity.get(eid, []),
         })
     return results
@@ -178,11 +244,13 @@ def format_memory_context(results: list[dict]) -> str:
         return ""
     lines: list[str] = []
     for r in results:
-        head = f"- {r['name']}（{r['type']}）：{r.get('description') or ''}".rstrip("：")
+        prefix = "- 待确认：" if _is_uncertain(r.get("confidence")) else "- "
+        head = f"{prefix}{r['name']}（{r['type']}）：{r.get('description') or ''}".rstrip("：")
         lines.append(head)
         for rel in r.get("relations", []):
             obj = rel.get("object_name") or ""
-            lines.append(f"    · {r['name']} {rel['predicate']} {obj}")
+            rel_prefix = "    · 待确认：" if _is_uncertain(rel.get("confidence")) else "    · "
+            lines.append(f"{rel_prefix}{r['name']} {rel['predicate']} {obj}")
     return "\n".join(lines)
 
 

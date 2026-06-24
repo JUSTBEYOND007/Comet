@@ -77,6 +77,9 @@ class MemoryService:
         )
 
         repo = MemoryGraphRepository()
+        repo_factory = getattr(self, "_memory_graph_repo_factory", None)
+        if repo_factory is not None:
+            repo = repo_factory()
         uid = str(user_id)
         entities = await repo.list_all_entities(uid)
         counts = await repo.entity_type_counts(uid)
@@ -91,6 +94,7 @@ class MemoryService:
                 "aliases": e.get("aliases") or [],
                 "relations": e.get("relations") or [],
                 "importance": e.get("importance", 0.5),
+                "confidence": e.get("confidence", 0.8),
                 "memory_layer": e.get("memory_layer") or "short_term",
                 "access_count": e.get("access_count", 0),
                 "mention_count": e.get("mention_count", 1),

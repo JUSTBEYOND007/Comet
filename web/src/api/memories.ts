@@ -39,6 +39,8 @@ export interface MemoryRelation {
   object_name: string | null
   object_type: string | null
   source_text: string | null
+  confidence?: number
+  importance?: number
 }
 
 export interface MemoryHit {
@@ -48,6 +50,9 @@ export interface MemoryHit {
   description: string | null
   aliases: string[]
   score: number
+  reliability_score?: number
+  confidence?: number
+  memory_layer?: string
   relations: MemoryRelation[]
 }
 
@@ -56,6 +61,8 @@ export interface EntityRelation {
   predicate: string
   object_name: string | null
   object_type: string | null
+  confidence?: number
+  importance?: number
 }
 
 export interface ProfileEntity {
@@ -66,6 +73,7 @@ export interface ProfileEntity {
   aliases: string[]
   relations: EntityRelation[]
   importance: number
+  confidence: number
   memory_layer: string
   access_count: number
   mention_count: number

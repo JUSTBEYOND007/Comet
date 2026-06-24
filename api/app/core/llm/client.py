@@ -4,6 +4,7 @@
 对网络抖动 / 服务端 5xx / 连接中断做有限重试（指数退避），提升萃取稳定性。
 """
 import asyncio
+import os
 
 import httpx
 
@@ -17,6 +18,33 @@ _MAX_RETRIES = 3
 _RETRY_BACKOFF = 1.5  # 秒，第 n 次重试等待 _RETRY_BACKOFF * n
 _RETRY_STATUS = {429, 500, 502, 503, 504}
 
+# Embedding 批量上限：阿里云 text-embedding-v3/v4 的 input 列表最多 10 条/批、每条 ≤8192 token。
+# 超过则自动切片 + 并发发送，调用方无感（子块 256 token，攒满 10 条一批最划算）。
+# EMBED_BATCH_SIZE / EMBED_CONCURRENCY 可经环境变量调。
+_EMBED_BATCH_SIZE = max(1, int(os.getenv("EMBED_BATCH_SIZE", "10")))
+_EMBED_CONCURRENCY = max(1, int(os.getenv("EMBED_CONCURRENCY", "8")))
+
+# 进程级共享 HTTP 客户端：复用连接池，避免每次请求重建 TCP/TLS。
+# 评测上万次嵌入调用时，握手开销累积可观，复用后显著提速。
+_shared_client: httpx.AsyncClient | None = None
+
+
+def _get_shared_client() -> httpx.AsyncClient:
+    global _shared_client
+    if _shared_client is None or _shared_client.is_closed:
+        _shared_client = httpx.AsyncClient(
+            limits=httpx.Limits(max_connections=100, max_keepalive_connections=20),
+        )
+    return _shared_client
+
+
+async def close_llm_client() -> None:
+    """关闭共享 HTTP 客户端（应用/评测退出时调用）。"""
+    global _shared_client
+    if _shared_client is not None and not _shared_client.is_closed:
+        await _shared_client.aclose()
+    _shared_client = None
+
 
 async def _post_with_retry(
     url: str, *, headers: dict, json: dict, timeout: float
@@ -27,10 +55,10 @@ async def _post_with_retry(
     其余 4xx（如鉴权/参数错误）不重试，直接抛出。
     """
     last_exc: Exception | None = None
+    client = _get_shared_client()
     for attempt in range(_MAX_RETRIES):
         try:
-            async with httpx.AsyncClient(timeout=timeout) as client:
-                resp = await client.post(url, headers=headers, json=json)
+            resp = await client.post(url, headers=headers, json=json, timeout=timeout)
             if resp.status_code in _RETRY_STATUS:
                 raise httpx.HTTPStatusError(
                     f"可重试状态 {resp.status_code}", request=resp.request, response=resp
@@ -70,12 +98,36 @@ class LLMClient:
     async def embed(
         self, texts: list[str], dimensions: int | None = None
     ) -> list[list[float]]:
-        """文本批量向量化。返回与输入等长的向量列表。
+        """文本批量向量化。返回与输入等长的向量列表（顺序与输入一致）。
 
         dimensions 控制输出维度（默认取 settings.embedding_dims），
         与 ES 索引维度保持一致；支持指定维度的 provider（如智谱 embedding-3）会按此裁剪。
+
+        超过单批上限（默认 10 条，见 EMBED_BATCH_SIZE）时自动切片 + 并发发送
+        （并发数见 EMBED_CONCURRENCY），调用方无感。
         """
+        if not texts:
+            return []
         dims = dimensions or settings.embedding_dims
+        if len(texts) <= _EMBED_BATCH_SIZE:
+            return await self._embed_one_batch(texts, dims)
+        batches = [texts[i:i + _EMBED_BATCH_SIZE]
+                   for i in range(0, len(texts), _EMBED_BATCH_SIZE)]
+        sem = asyncio.Semaphore(_EMBED_CONCURRENCY)
+
+        async def run(idx: int, batch: list[str]):
+            async with sem:
+                return idx, await self._embed_one_batch(batch, dims)
+
+        parts = await asyncio.gather(*(run(i, b) for i, b in enumerate(batches)))
+        parts.sort(key=lambda x: x[0])  # 按批次顺序还原
+        out: list[list[float]] = []
+        for _, vecs in parts:
+            out.extend(vecs)
+        return out
+
+    async def _embed_one_batch(self, texts: list[str], dims: int) -> list[list[float]]:
+        """单次嵌入请求（不超过 EMBED_BATCH_SIZE 条）。"""
         payload: dict = {
             "model": self.model_name,
             "input": texts,

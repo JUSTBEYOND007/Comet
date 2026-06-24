@@ -3279,6 +3279,19 @@ body {
   border-radius: 12px;
   padding: 16px 18px;
 }
+.memory-entity-card {
+  border-color: #eef0f4;
+  transition: border-color 0.18s ease, box-shadow 0.18s ease, background 0.18s ease;
+}
+.memory-entity-card--weak {
+  background: linear-gradient(180deg, #fffaf0 0%, #fff 56%);
+  border-color: #ffe3a3;
+  box-shadow: 0 10px 26px -22px rgba(181, 101, 29, 0.38);
+}
+.memory-entity-card--weak:hover {
+  border-color: #ffc766;
+  box-shadow: 0 14px 30px -22px rgba(181, 101, 29, 0.48);
+}
 .insight-grid {
   position: relative;
   display: grid;

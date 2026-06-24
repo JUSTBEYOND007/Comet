@@ -21,6 +21,17 @@ logger = get_logger(__name__)
 _RECALL_TIMEOUT = 3.5
 
 
+def _confidence(value: object, default: float = 0.8) -> float:
+    try:
+        return float(value if value is not None else default)
+    except (TypeError, ValueError):
+        return default
+
+
+def _uncertain_prefix(confidence: object) -> str:
+    return "待确认：" if _confidence(confidence) < settings.active_recall_uncertain_confidence else ""
+
+
 async def recall_context(
     *,
     embed_client: LLMClient,
@@ -79,16 +90,20 @@ async def _do_recall(
                 query=query,
                 top_k=settings.active_recall_entity_top_k,
                 min_vector_score=settings.active_recall_min_score,
+                min_confidence=settings.active_recall_min_confidence,
+                use_reliability_score=True,
                 query_vector=qvec,  # 复用已算好的向量，不重复 embedding
             )
             for h in hits:
                 name = h.get("name") or ""
                 desc = (h.get("description") or "").strip()
-                lines.append(f"- {name}：{desc}" if desc else f"- {name}")
+                prefix = _uncertain_prefix(h.get("confidence"))
+                lines.append(f"- {prefix}{name}：{desc}" if desc else f"- {prefix}{name}")
                 for rel in h.get("relations", [])[:2]:
                     obj = rel.get("object_name") or ""
                     if obj:
-                        lines.append(f"  · {name} {rel.get('predicate', '')} {obj}")
+                        rel_prefix = _uncertain_prefix(rel.get("confidence"))
+                        lines.append(f"  · {rel_prefix}{name} {rel.get('predicate', '')} {obj}")
         except Exception as e:
             logger.warning("主动召回-记忆失败（忽略）: %s", e)
         return lines
@@ -101,7 +116,10 @@ async def _do_recall(
     if not insight_lines and not memory_lines:
         return ""
 
-    parts: list[str] = ["【关于用户的已知信息（供参考，可自然融入回答，不必刻意提及）】"]
+    parts: list[str] = [
+        "【关于用户的已知信息（供参考，可自然融入回答，不必刻意提及；"
+        "待确认内容不要当作确定事实，回答时应表达不确定或向用户确认）】"
+    ]
     if insight_lines:
         parts.append("我对用户的理解：" + "；".join(insight_lines))
     if memory_lines:

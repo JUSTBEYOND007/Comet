@@ -188,14 +188,27 @@ export default function ModelConfigPage() {
     }
   }
 
-  // 按类型排序展示（统一两列网格，不再按类型分块）
-  const sorted = useMemo(
-    () =>
-      [...list].sort(
-        (a, b) => TYPE_ORDER.indexOf(a.type) - TYPE_ORDER.indexOf(b.type),
-      ),
-    [list],
-  )
+  // 按类型分组,每组单独成区,支持顶部锚点跳转
+  const grouped = useMemo(() => {
+    const map = new Map<ModelType, ModelConfigItem[]>()
+    TYPE_ORDER.forEach((t) => map.set(t, []))
+    list.forEach((it) => {
+      const arr = map.get(it.type)
+      if (arr) arr.push(it)
+    })
+    // 同组内默认配置在前,其余按名称排序保持稳定
+    map.forEach((arr) => {
+      arr.sort((a, b) => {
+        if (a.is_default && !b.is_default) return -1
+        if (!a.is_default && b.is_default) return 1
+        return a.name.localeCompare(b.name)
+      })
+    })
+    return TYPE_ORDER.filter((t) => (map.get(t) || []).length > 0).map((t) => ({
+      type: t,
+      items: map.get(t) || [],
+    }))
+  }, [list])
 
   const renderCard = (item: ModelConfigItem) => {
     const meta = TYPE_META[item.type]
@@ -430,13 +443,161 @@ export default function ModelConfigPage() {
       />
 
       <Spin spinning={loading}>
-        {sorted.length === 0 && !loading ? (
+        {grouped.length === 0 && !loading ? (
           <Empty
             style={{ padding: '60px 0' }}
-            description="还没有模型配置，点击右上角新增一个"
+            description="还没有模型配置,点击右上角新增一个"
           />
         ) : (
-          <div className="model-card-grid">{sorted.map(renderCard)}</div>
+          <div>
+            {/* 顶部分类快捷锚点 */}
+            {grouped.length > 1 && (
+              <div
+                style={{
+                  display: 'flex',
+                  flexWrap: 'wrap',
+                  gap: 8,
+                  padding: '10px 14px',
+                  background: '#ffffff',
+                  border: '1px solid #eef0f4',
+                  borderRadius: 12,
+                  marginBottom: 18,
+                  position: 'sticky',
+                  top: 8,
+                  zIndex: 10,
+                }}
+              >
+                <Typography.Text
+                  type="secondary"
+                  style={{ fontSize: 12.5, marginRight: 6, alignSelf: 'center' }}
+                >
+                  快速跳转
+                </Typography.Text>
+                {grouped.map((g) => {
+                  const meta = TYPE_META[g.type]
+                  return (
+                    <a
+                      key={g.type}
+                      href={`#type-${g.type}`}
+                      onClick={(e) => {
+                        e.preventDefault()
+                        document
+                          .getElementById(`type-${g.type}`)
+                          ?.scrollIntoView({ behavior: 'smooth', block: 'start' })
+                      }}
+                      style={{
+                        display: 'inline-flex',
+                        alignItems: 'center',
+                        gap: 6,
+                        padding: '3px 10px',
+                        borderRadius: 999,
+                        fontSize: 12.5,
+                        fontWeight: 500,
+                        color: meta.color,
+                        background: meta.bg,
+                        border: `1px solid ${meta.color}26`,
+                        textDecoration: 'none',
+                        transition: 'transform 0.12s, box-shadow 0.18s',
+                      }}
+                      onMouseEnter={(e) => {
+                        e.currentTarget.style.transform = 'translateY(-1px)'
+                        e.currentTarget.style.boxShadow = `0 4px 10px -6px ${meta.color}80`
+                      }}
+                      onMouseLeave={(e) => {
+                        e.currentTarget.style.transform = ''
+                        e.currentTarget.style.boxShadow = ''
+                      }}
+                    >
+                      <span
+                        style={{
+                          display: 'inline-block',
+                          width: 6,
+                          height: 6,
+                          borderRadius: '50%',
+                          background: meta.color,
+                        }}
+                      />
+                      {TYPE_LABEL[g.type]}
+                      <span
+                        style={{
+                          marginLeft: 2,
+                          padding: '0 6px',
+                          fontSize: 11,
+                          fontWeight: 600,
+                          background: '#fff',
+                          borderRadius: 999,
+                          color: meta.color,
+                        }}
+                      >
+                        {g.items.length}
+                      </span>
+                    </a>
+                  )
+                })}
+              </div>
+            )}
+
+            {/* 分组列表 */}
+            {grouped.map((g, gi) => {
+              const meta = TYPE_META[g.type]
+              return (
+                <section
+                  key={g.type}
+                  id={`type-${g.type}`}
+                  style={{
+                    scrollMarginTop: 70,
+                    marginTop: gi === 0 ? 0 : 28,
+                  }}
+                >
+                  {/* 分组头 */}
+                  <div
+                    style={{
+                      display: 'flex',
+                      alignItems: 'center',
+                      gap: 12,
+                      paddingBottom: 12,
+                      marginBottom: 14,
+                      borderBottom: `1px solid ${meta.color}1f`,
+                    }}
+                  >
+                    <span
+                      style={{
+                        width: 4,
+                        height: 18,
+                        borderRadius: 2,
+                        background: meta.gradient,
+                      }}
+                    />
+                    <Typography.Text
+                      strong
+                      style={{ fontSize: 15.5, color: '#171719' }}
+                    >
+                      {TYPE_LABEL[g.type]}
+                    </Typography.Text>
+                    <span
+                      style={{
+                        padding: '1px 8px',
+                        fontSize: 11.5,
+                        fontWeight: 600,
+                        borderRadius: 999,
+                        color: meta.color,
+                        background: meta.bg,
+                      }}
+                    >
+                      {g.items.length}
+                    </span>
+                    <Typography.Text
+                      type="secondary"
+                      style={{ fontSize: 12.5, color: '#98A2B3' }}
+                    >
+                      {meta.desc}
+                    </Typography.Text>
+                  </div>
+                  <div className="model-card-grid">{g.items.map(renderCard)}</div>
+                </section>
+              )
+            })}
+          </div>
         )}
       </Spin>
 

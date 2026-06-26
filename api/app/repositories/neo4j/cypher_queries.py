@@ -294,6 +294,7 @@ RETURN e.id AS id, e.name AS name, e.type AS type,
        coalesce(e.mention_count, 1) AS mention_count,
        coalesce(e.core_facts, []) AS core_facts,
        coalesce(e.traits, []) AS traits,
+       coalesce(e.human_verified, false) AS human_verified,
        [rel IN rels WHERE rel.predicate IS NOT NULL] AS relations
 ORDER BY coalesce(e.importance, 0.5) DESC, e.created_at DESC
 """
@@ -311,6 +312,41 @@ ORDER BY cnt DESC
 DELETE_ENTITY = """
 MATCH (e:Entity {user_id: $user_id, id: $entity_id})
 DETACH DELETE e
+"""
+
+# ── V0.0.5 ⑤ 人类反馈纠错:确认(human_verified=true + confidence=1.0)/ 修正属性 ──
+
+# 用户确认实体正确:打 human_verified 永久标记 + confidence 拉满 + memory_layer 升长期
+HUMAN_VERIFY_ENTITY = """
+MATCH (e:Entity {user_id: $user_id, id: $entity_id})
+SET e.human_verified = true,
+    e.human_verified_at = datetime(),
+    e.confidence = 1.0,
+    e.memory_layer = 'long_term'
+RETURN e.id AS id
+"""
+
+# 用户修正实体属性(name / type / description / aliases)
+CORRECT_ENTITY = """
+MATCH (e:Entity {user_id: $user_id, id: $entity_id})
+SET e.name = coalesce($name, e.name),
+    e.type = coalesce($type, e.type),
+    e.description = coalesce($description, e.description),
+    e.aliases = coalesce($aliases, e.aliases),
+    e.human_verified = true,
+    e.human_verified_at = datetime(),
+    e.confidence = 1.0
+RETURN e.id AS id, e.name AS name, e.type AS type
+"""
+
+# 取单个实体的当前快照(操作前用,写进 memory_corrections.before)
+ENTITY_SNAPSHOT = """
+MATCH (e:Entity {user_id: $user_id, id: $entity_id})
+RETURN e.id AS id, e.name AS name, e.type AS type,
+       e.description AS description, e.aliases AS aliases,
+       coalesce(e.confidence, 0.8) AS confidence,
+       coalesce(e.memory_layer, 'short_term') AS memory_layer,
+       coalesce(e.human_verified, false) AS human_verified
 """
 
 # ── 社区聚类（阶段7）──
@@ -381,13 +417,15 @@ SET c.name = $name, c.summary = $summary
 RETURN c.id AS id
 """
 
-# 社区列表（成员数倒序）
+# 社区列表(实时统计真实成员数,过滤掉空壳社区——存储的 member_count 可能因实体删除/改归属而脏)
 COMMUNITY_LIST = """
 MATCH (c:Community {user_id: $user_id})
-WHERE c.member_count > 0
+OPTIONAL MATCH (e:Entity {user_id: $user_id, community_id: c.id})
+WITH c, count(e) AS actual_count
+WHERE actual_count > 0
 RETURN c.id AS id, c.name AS name, c.summary AS summary,
-       c.member_count AS member_count
-ORDER BY c.member_count DESC
+       actual_count AS member_count
+ORDER BY actual_count DESC
 """
 
 # 用户是否已有社区（判断全量 or 增量）

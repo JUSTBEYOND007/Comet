@@ -35,11 +35,10 @@ def load(n: int = 500, seed: int = 42) -> list[HotpotQuery]:
         ) from e
 
     cache_dir = str(cache_path("hf_datasets").parent)
-    # HuggingFace 上 hotpot_qa 的 distractor 配置
+    # 用官方组织维护的 parquet 版本(原 hotpot_qa 用 loading script,新版 datasets 不再支持)
     ds = load_dataset(
-        "hotpot_qa", "distractor",
+        "hotpotqa/hotpot_qa", "distractor",
         cache_dir=cache_dir, split="validation",
-        trust_remote_code=True,
     )
     queries: list[HotpotQuery] = []
     for row in ds:

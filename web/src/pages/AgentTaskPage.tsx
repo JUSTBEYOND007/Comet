@@ -396,13 +396,27 @@ export default function AgentTaskPage() {
             >
               <List.Item.Meta
                 title={
-                  <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
                     <span style={{ flex: 1, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
                       {r.title}
                     </span>
                     {r.status === 'done' && <Tag color="success">完成</Tag>}
                     {r.status === 'failed' && <Tag color="error">失败</Tag>}
                     {!['done', 'failed'].includes(r.status) && <Tag color="processing">运行中</Tag>}
+                    {/* V0.0.5 ② Verifier Loop 徽章(仅完成且跑过 verifier 才显示) */}
+                    {r.status === 'done' && r.verified === 'passed' && (
+                      <Tag color="success">
+                        ✓ verified{typeof r.final_score === 'number' ? ` · ${r.final_score.toFixed(2)}` : ''}
+                      </Tag>
+                    )}
+                    {r.status === 'done' && r.verified === 'exceeded' && (
+                      <Tag color="warning">
+                        ⚠ 复核未达标{typeof r.final_score === 'number' ? ` · ${r.final_score.toFixed(2)}` : ''}
+                      </Tag>
+                    )}
+                    {r.status === 'done' && r.verified === 'failed' && (
+                      <Tag color="error">复核异常</Tag>
+                    )}
                   </div>
                 }
                 description={

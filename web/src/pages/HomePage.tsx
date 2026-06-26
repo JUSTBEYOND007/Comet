@@ -21,6 +21,7 @@ import {
   dashboardApi,
   type AgentBriefItem,
   type DailyReview,
+  type LoopHealthData,
   type MemoryStatsData,
   type OverviewData,
 } from '@/api/dashboard'
@@ -32,6 +33,7 @@ import {
 } from '@/api/emotion'
 import { modelApi, type ModelConfigItem } from '@/api/models'
 import { useAuthStore } from '@/stores/authStore'
+import LoopHealthCard from '@/components/research/LoopHealthCard'
 
 const WELCOME_SEEN_KEY = 'comet_welcome_seen'
 
@@ -40,6 +42,7 @@ export default function HomePage() {
   const user = useAuthStore((s) => s.user)
   const [review, setReview] = useState<DailyReview | null>(null)
   const [briefing, setBriefing] = useState<AgentBriefItem[]>([])
+  const [loopHealth, setLoopHealth] = useState<LoopHealthData | null>(null)
   const [overview, setOverview] = useState<OverviewData | null>(null)
   const [memStats, setMemStats] = useState<MemoryStatsData | null>(null)
   const [emotionProfile, setEmotionProfile] = useState<EmotionProfile | null>(null)
@@ -96,6 +99,10 @@ export default function HomePage() {
         .agentBriefing()
         .then(({ data }) => setBriefing(data))
         .catch(() => {})
+      dashboardApi
+        .loopHealth(30)
+        .then(({ data }) => setLoopHealth(data))
+        .catch(() => setLoopHealth(null))
       emotionApi
         .current()
         .then(({ data }) => setEmotionProfile(data))
@@ -528,6 +535,13 @@ export default function HomePage() {
     </Card>
   )
 
+  // V0.0.5 ② Loop 健康度卡(没数据时不显示,避免新用户看到空卡)
+  const loopHealthCard = loopHealth && loopHealth.total > 0 && (
+    <div style={{ marginBottom: 22 }}>
+      <LoopHealthCard data={loopHealth} />
+    </div>
+  )
+
   const dataSection = (
     <>
       <div className="dash-section-title">📊 数据概览</div>
@@ -638,6 +652,7 @@ export default function HomePage() {
         <>
           {reviewCard}
           {briefingCard}
+          {loopHealthCard}
           {finishedSteps < quickSteps.length && quickStartCard}
           {featuresCard}
           {dataSection}

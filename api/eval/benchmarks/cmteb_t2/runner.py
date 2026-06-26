@@ -184,8 +184,9 @@ async def run_benchmark(
         "指标遵循 C-MTEB 官方协议（k=10）；source_id 用 corpus 原 cid。",
     ]
     report = write_benchmark_report("cmteb-t2", "C-MTEB T2Retrieval (L2)",
-                                    table, meta=meta, extra_notes=notes)
-    detail_path = write_benchmark_details("cmteb-t2", details)
+                                    table, meta=meta, extra_notes=notes,
+                                    category="rag")
+    detail_path = write_benchmark_details("cmteb-t2", details, category="rag")
     print(f"  报告: {report}\n  明细: {detail_path}")
 
     if not keep_corpus:

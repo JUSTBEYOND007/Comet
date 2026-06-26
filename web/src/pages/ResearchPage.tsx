@@ -40,7 +40,10 @@ import {
   type ResearchSource,
   type ResearchStep,
   type ResearchStreamHandlers,
+  type LoopDetail,
 } from '@/api/research'
+
+import QualityCard from '@/components/research/QualityCard'
 
 const { TextArea } = Input
 
@@ -104,6 +107,8 @@ export default function ResearchPage() {
   const [finalMd, setFinalMd] = useState<string | null>(null)
   const [detail, setDetail] = useState<ReportDetail | null>(null)
   const [loadingDetail, setLoadingDetail] = useState(false)
+  // V0.0.5 ② Verifier Loop:实时进度 + 完成后的详情
+  const [loopDetail, setLoopDetail] = useState<LoopDetail | null>(null)
   // 进度面板展开态：桌面默认展开，手机默认收起（省屏幕）
   const isMobile =
     typeof window !== 'undefined' && window.matchMedia('(max-width: 768px)').matches
@@ -112,6 +117,8 @@ export default function ResearchPage() {
 
   const abortRef = useRef<AbortController | null>(null)
   const bodyRef = useRef<HTMLDivElement>(null)
+  // 当前 report id 的 ref(避免 SSE 回调闭包读到旧值)
+  const currentIdRef = useRef<string | null>(null)
 
   const loadReports = useCallback(async () => {
     try {
@@ -159,11 +166,13 @@ export default function ResearchPage() {
     setLiveText('')
     setFinalMd(null)
     setDetail(null)
+    setLoopDetail(null)
   }
 
   const buildHandlers = (): ResearchStreamHandlers => ({
     onMeta: (d) => {
       setCurrentId(d.report_id)
+      currentIdRef.current = d.report_id
       setReports((prev) => [
         { id: d.report_id, topic: d.topic, title: null, status: 'planning', created_at: null },
         ...prev,
@@ -204,11 +213,67 @@ export default function ResearchPage() {
       setRunning(false)
       setFeedOpen(false)
       loadReports()
+      // 拉一次 LoopDetail 显示评分卡(loop_enabled 关或 engine 异常时返回 null)
+      // 延迟 500ms 给后端 LoopStore.finish_run() 落库 commit 留时间,
+      // 避免拉到 status=running 的临时态(loop_finished 事件先到 + store 异步 commit 后到的时序竞态)
+      if (currentIdRef.current) {
+        const reportId = currentIdRef.current
+        window.setTimeout(() => {
+          researchApi
+            .loopDetail(reportId)
+            .then((res) => setLoopDetail(res.data))
+            .catch(() => setLoopDetail(null))
+        }, 500)
+      }
     },
     onIdle: () => setRunning(false),
     onError: (msg) => {
       message.error(msg)
       setRunning(false)
+    },
+    // V0.0.5 ② Verifier Loop 实时进度
+    onLoopStarted: (d) => {
+      setSteps((s) => [
+        ...s,
+        { icon: 'verify', ok: true, text: `质量复核启动(最多 ${d.max_iterations} 轮,通过线 ${d.pass_threshold.toFixed(2)})` },
+      ])
+    },
+    onLoopVerifyStart: (d) => {
+      setSteps((s) => [...s, { icon: 'verify', ok: true, text: `第 ${d.iteration} 轮质量复核中…` }])
+    },
+    onLoopVerifyDone: (d) => {
+      const total =
+        (d.scores as { total?: number })?.total ?? null
+      setSteps((s) => [
+        ...s,
+        {
+          icon: 'verify',
+          ok: d.decision === 'pass',
+          text: `第 ${d.iteration} 轮评分 ${total != null ? total.toFixed(2) : '-'}(决策:${d.decision})${d.feedback_summary ? ` · ${d.feedback_summary}` : ''}`,
+        },
+      ])
+    },
+    onLoopRepairStart: (d) => {
+      const action =
+        d.kind === 'patch'
+          ? `补搜补写(${(d.patch_queries || []).slice(0, 2).join(' / ') || '-'})`
+          : d.kind === 'chapter_rewrite'
+            ? `重写章节(${(d.rewrite_chapters || []).join('、') || '-'})`
+            : d.kind
+      setSteps((s) => [
+        ...s,
+        { icon: 'repair', ok: true, text: `第 ${d.iteration} 轮回炉:${action}` },
+      ])
+    },
+    onLoopFinished: (d) => {
+      setSteps((s) => [
+        ...s,
+        {
+          icon: 'verify',
+          ok: d.status === 'passed',
+          text: `质量复核完成:${d.status === 'passed' ? '通过' : d.status === 'exceeded' ? '未达标(达迭代上限)' : '异常'}${d.final_score != null ? ` · 总分 ${d.final_score.toFixed(2)}` : ''}`,
+        },
+      ])
     },
   })
 
@@ -275,6 +340,11 @@ export default function ResearchPage() {
         setFinalMd(d.report_md)
         setSources(d.sources ?? [])
         setPlan(d.outline ?? null)
+        // 拉历史报告对应的 Verifier Loop 评分卡(没跑过 verifier 的老报告会返回 null,卡不显示)
+        researchApi
+          .loopDetail(id)
+          .then((r) => setLoopDetail(r.data))
+          .catch(() => setLoopDetail(null))
       }
     } catch {
       message.error('加载报告失败')
@@ -744,6 +814,13 @@ export default function ResearchPage() {
                 </div>
                 {running && <span className="research-caret">▍</span>}
               </Card>
+            )}
+
+            {/* V0.0.5 ② 质量评分卡(loop_enabled 关或异常时 loopDetail=null 不显示) */}
+            {loopDetail && !running && (
+              <div style={{ marginTop: 16 }}>
+                <QualityCard detail={loopDetail} />
+              </div>
             )}
 
             {detail?.status === 'failed' && (

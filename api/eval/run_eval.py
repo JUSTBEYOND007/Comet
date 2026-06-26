@@ -146,6 +146,7 @@ async def _run_benchmark(args, embed, chat, rerank) -> None:
                 sample=args.sample,
                 verifier=args.verifier,
                 seed=args.seed,
+                verifier_client_factory=eval_config.verifier_client,
             )
         elif bm == "longmemeval":
             from eval.benchmarks.longmemeval import run_benchmark

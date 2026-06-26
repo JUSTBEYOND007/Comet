@@ -262,7 +262,8 @@ async def run_benchmark(
     report = write_benchmark_report(
         "longmemeval", "LongMemEval-S (L4)",
         table, meta=meta, extra_notes=notes,
+        category="memory",
     )
-    detail_path = write_benchmark_details("longmemeval", details)
+    detail_path = write_benchmark_details("longmemeval", details, category="memory")
     print(f"  报告: {report}\n  明细: {detail_path}")
     return table, details

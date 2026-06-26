@@ -120,7 +120,7 @@ class DashboardService:
         return {"trend": trend, "community_distribution": community_dist}
 
     async def agent_briefing(self, user_id: uuid.UUID, limit: int = 5) -> list[dict]:
-        """Agent 简报：最近完成的深度研究报告（含定时任务产出），供首页主动呈现。"""
+        """Agent 简报:最近完成的深度研究报告(含定时任务产出),供首页主动呈现。"""
         from app.models.research_report_model import (
             RESEARCH_STATUS_DONE,
             ResearchReport,
@@ -150,6 +150,109 @@ class DashboardService:
             }
             for rid, title, topic, task_id, t in rows.all()
         ]
+
+    async def loop_health(self, user_id: uuid.UUID, days: int = 30) -> dict:
+        """V0.0.5 ② Loop 健康度:近 N 天 Verifier Loop 运行情况聚合。
+
+        返回:
+        - total / passed / exceeded / failed:状态分布
+        - one_shot_pass_rate:一次通过率(iterations=1 且 status=passed)
+        - avg_iterations:平均迭代次数(passed + exceeded)
+        - avg_final_score:平均最终评分(passed + exceeded)
+        - failure_dims:失败维度归因(各维度单维不达硬门槛的次数 top 5)
+        - verifier_kinds:verifier_kind 分布(same / cross 各跑了多少次)
+        """
+        from datetime import datetime as _dt, timedelta, timezone as _tz
+
+        from app.models.loop_model import (
+            STATUS_EXCEEDED,
+            STATUS_FAILED,
+            STATUS_PASSED,
+            LoopIteration,
+            LoopRun,
+        )
+
+        since = _dt.now(_tz.utc) - timedelta(days=days)
+
+        # 1) 状态分布 + 迭代/评分平均(passed/exceeded 计入)
+        rows = await self.session.execute(
+            select(LoopRun.status, LoopRun.iterations, LoopRun.final_score,
+                   LoopRun.verifier_kind)
+            .where(LoopRun.user_id == user_id)
+            .where(LoopRun.started_at >= since)
+        )
+        runs = rows.all()
+        total = len(runs)
+        passed = sum(1 for r in runs if r.status == STATUS_PASSED)
+        exceeded = sum(1 for r in runs if r.status == STATUS_EXCEEDED)
+        failed = sum(1 for r in runs if r.status == STATUS_FAILED)
+        # 一次通过率:第一轮就通过的占比(passed 且 iterations=1)
+        one_shot = sum(1 for r in runs if r.status == STATUS_PASSED and r.iterations == 1)
+        one_shot_rate = round(one_shot / total, 4) if total else 0.0
+        # 平均迭代(只看 passed/exceeded,failed 是异常崩溃没意义)
+        valid_for_avg = [r for r in runs if r.status in (STATUS_PASSED, STATUS_EXCEEDED)]
+        avg_iter = (
+            round(sum(r.iterations for r in valid_for_avg) / len(valid_for_avg), 2)
+            if valid_for_avg else 0.0
+        )
+        scores = [r.final_score for r in valid_for_avg if r.final_score is not None]
+        avg_score = round(sum(scores) / len(scores), 4) if scores else 0.0
+        # verifier_kind 分布
+        kind_dist: dict[str, int] = {}
+        for r in runs:
+            k = r.verifier_kind or "(none)"
+            kind_dist[k] = kind_dist.get(k, 0) + 1
+
+        # 2) 失败维度归因:扫所有 iterations,统计各维度单维不达硬门槛的次数
+        # 硬门槛与 rubric/research.py 保持一致(变了顺手在这里同步)
+        thresholds = {
+            "coverage": 3.0,
+            "faithfulness": 3.0,
+            "depth": 2.0,
+            "timeliness": 3.0,
+            "relevance": 3.0,
+            "readability": 2.0,
+        }
+        labels = {
+            "coverage": "覆盖度",
+            "faithfulness": "引用对齐",
+            "depth": "论证深度",
+            "timeliness": "时效性",
+            "relevance": "相关性",
+            "readability": "结构与可读",
+        }
+        # 只拉本用户近 N 天的 iterations(走 JOIN 避免拉全表)
+        it_rows = await self.session.execute(
+            select(LoopIteration.scores)
+            .join(LoopRun, LoopIteration.run_id == LoopRun.id)
+            .where(LoopRun.user_id == user_id)
+            .where(LoopRun.started_at >= since)
+        )
+        dim_fail_count: dict[str, int] = {}
+        for (scores_jsonb,) in it_rows.all():
+            raw = (scores_jsonb or {}).get("raw") or {}
+            for dim, thr in thresholds.items():
+                v = raw.get(dim)
+                if isinstance(v, (int, float)) and float(v) < thr:
+                    dim_fail_count[dim] = dim_fail_count.get(dim, 0) + 1
+        failure_dims = sorted(
+            [{"dim": d, "label": labels.get(d, d), "count": c}
+             for d, c in dim_fail_count.items()],
+            key=lambda x: x["count"], reverse=True,
+        )[:6]
+
+        return {
+            "days": days,
+            "total": total,
+            "passed": passed,
+            "exceeded": exceeded,
+            "failed": failed,
+            "one_shot_pass_rate": one_shot_rate,
+            "avg_iterations": avg_iter,
+            "avg_final_score": avg_score,
+            "failure_dims": failure_dims,
+            "verifier_kinds": kind_dist,
+        }
 
 
 __all__ = ["DashboardService"]

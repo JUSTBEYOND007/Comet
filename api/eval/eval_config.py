@@ -44,3 +44,13 @@ def chat_client() -> LLMClient:
 def rerank_client() -> LLMClient | None:
     """可选；未配置返回 None（评测时跳过 rerank 相关项）。"""
     return _build("EVAL_RERANK")
+
+
+def verifier_client() -> LLMClient | None:
+    """V0.0.5 ② Verifier Loop 的「跨 family」验证模型(评测期专用)。
+
+    未配置返回 None,hotpotqa A/B 实验时:
+    - --verifier=cross 时若 None 自动降级到 same 并打 warning
+    - --verifier=same 时不使用,本函数不调
+    """
+    return _build("EVAL_VERIFIER")

@@ -131,15 +131,39 @@ class AgentTaskService:
         return [self.to_dict(t) for t in tasks]
 
     async def list_runs(self, user_id: uuid.UUID, task_id: uuid.UUID) -> list[dict]:
-        """某任务的运行历史（复用 research_reports，task_id 关联）。"""
+        """某任务的运行历史（复用 research_reports，task_id 关联）。
+
+        V0.0.5 ② 起,每条 run 附 `verified`(passed/exceeded/failed/none)+ `final_score`,
+        前端能直接显示评分徽章。无 LoopRun 时 verified='none' 不影响展示。
+        """
+        from app.core.agent.loop.store import LoopStore
+        from app.models.loop_model import LoopRun
         from app.repositories.research_report_repository import (
             ResearchReportRepository,
         )
+        from sqlalchemy import select
 
         await self._get_or_404(user_id, task_id)
         reports = await ResearchReportRepository(self.session).list_by_task(
             user_id, task_id
         )
+        report_ids = [r.id for r in reports]
+
+        # 批量查这些 report 对应的最新 LoopRun(避免 N+1)
+        loop_by_report: dict = {}
+        if report_ids:
+            stmt = (
+                select(LoopRun)
+                .where(LoopRun.task_type == "research")
+                .where(LoopRun.task_id.in_(report_ids))
+                .order_by(LoopRun.started_at.desc())
+            )
+            res = await self.session.execute(stmt)
+            for run in res.scalars().all():
+                if run.task_id and run.task_id not in loop_by_report:
+                    loop_by_report[run.task_id] = run
+        _ = LoopStore  # 引用一下避免 ruff 提示未使用
+
         return [
             {
                 "id": str(r.id),
@@ -147,6 +171,12 @@ class AgentTaskService:
                 "status": r.status,
                 "error_msg": r.error_msg,
                 "created_at": r.created_at.isoformat() if r.created_at else None,
+                "verified": (
+                    loop_by_report[r.id].status if r.id in loop_by_report else "none"
+                ),
+                "final_score": (
+                    loop_by_report[r.id].final_score if r.id in loop_by_report else None
+                ),
             }
             for r in reports
         ]

@@ -15,6 +15,7 @@ from app.models.favorite_model import Favorite
 from app.models.group_member_model import GroupMember
 from app.models.image_model import Image
 from app.models.knowledge_base_model import KnowledgeBase
+from app.models.loop_model import LoopIteration, LoopRun
 from app.models.mcp_server_model import MCPServer
 from app.models.memory_model import Memory
 from app.models.message_feedback_model import MessageFeedback
@@ -45,6 +46,8 @@ __all__ = [
     "GroupMember",
     "Image",
     "KnowledgeBase",
+    "LoopRun",
+    "LoopIteration",
     "MCPServer",
     "Memory",
     "MessageFeedback",

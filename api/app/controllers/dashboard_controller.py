@@ -47,3 +47,13 @@ async def agent_briefing(
 ):
     """Agent 简报：最近完成的深度研究报告（含定时任务产出）。"""
     return success(await DashboardService(session).agent_briefing(user.id))
+
+
+@router.get("/loop-health")
+async def loop_health(
+    days: int = 30,
+    user: User = Depends(get_current_user),
+    session: AsyncSession = Depends(get_session),
+):
+    """V0.0.5 ② Loop 健康度:近 N 天 Verifier Loop 状态分布 + 一次通过率 + 失败维度归因。"""
+    return success(await DashboardService(session).loop_health(user.id, days=days))

@@ -43,6 +43,9 @@ export interface AgentTaskRun {
   status: 'pending' | 'planning' | 'searching' | 'writing' | 'summarizing' | 'done' | 'failed'
   error_msg: string | null
   created_at: string | null
+  // V0.0.5 ② Verifier Loop 复核状态:passed/exceeded/failed/none(没跑过 verifier)
+  verified?: 'passed' | 'exceeded' | 'failed' | 'running' | 'none'
+  final_score?: number | null
 }
 
 export const agentTaskApi = {

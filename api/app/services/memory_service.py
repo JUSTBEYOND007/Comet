@@ -119,6 +119,248 @@ class MemoryService:
 
         await MemoryGraphRepository().delete_entity(str(user_id), entity_id)
 
+    # ── V0.0.5 ⑤ 人类反馈闭环 ──
+
+    async def review_overview(self, user_id: uuid.UUID, days: int = 30) -> dict:
+        """记忆审查 Tab 1「我的记忆全景」聚合:类型分布 + 置信度直方 +
+        长短期比例 + 近 N 天新增趋势 + 纠错统计。"""
+        from datetime import datetime as _dt, timedelta, timezone as _tz
+
+        from app.repositories.memory_correction_repository import (
+            MemoryCorrectionRepository,
+        )
+        from app.repositories.neo4j.memory_graph_repository import (
+            MemoryGraphRepository,
+        )
+
+        uid = str(user_id)
+        repo = MemoryGraphRepository()
+        entities = await repo.list_all_entities(uid)
+        # 类型分布
+        type_dist: dict[str, int] = {}
+        # 置信度 5 分桶(0~0.2 / 0.2~0.4 / ... / 0.8~1.0)
+        conf_buckets = [0] * 5
+        long_term = 0
+        verified = 0
+        # 近 30 天新增按天聚合
+        since = _dt.now(_tz.utc) - timedelta(days=days)
+        since_date = since.date()
+        daily_new: dict[str, int] = {}
+        for e in entities:
+            t = e.get("type") or "其他"
+            type_dist[t] = type_dist.get(t, 0) + 1
+            conf = float(e.get("confidence", 0.8) or 0.8)
+            idx = min(4, max(0, int(conf * 5)))
+            conf_buckets[idx] += 1
+            if e.get("memory_layer") == "long_term":
+                long_term += 1
+            if e.get("human_verified"):
+                verified += 1
+            ca = e.get("created_at")
+            if ca:
+                try:
+                    # Neo4j 返回的 created_at 可能是 neo4j.time.DateTime
+                    d = ca.to_native().date() if hasattr(ca, "to_native") else ca.date()
+                    if d >= since_date:
+                        key = d.isoformat()
+                        daily_new[key] = daily_new.get(key, 0) + 1
+                except Exception:  # noqa: BLE001
+                    pass
+        trend = [
+            {"date": d, "count": daily_new.get(d, 0)}
+            for d in sorted(daily_new.keys())
+        ]
+        # 纠错统计
+        try:
+            correction_counts = await MemoryCorrectionRepository(
+                self.session
+            ).count_by_action(user_id)
+        except Exception:  # noqa: BLE001
+            correction_counts = {}
+        # 关系数(只算外向 RELATION)
+        total_relations = sum(len(e.get("relations") or []) for e in entities)
+        # 待确认(低置信度)实体数:< 0.75
+        pending = sum(
+            1 for e in entities
+            if not e.get("human_verified")
+            and float(e.get("confidence", 0.8) or 0.8) < 0.75
+        )
+        return {
+            "total_entities": len(entities),
+            "total_relations": total_relations,
+            "long_term": long_term,
+            "verified": verified,
+            "pending": pending,
+            "type_distribution": [
+                {"type": t, "count": c}
+                for t, c in sorted(
+                    type_dist.items(), key=lambda x: x[1], reverse=True
+                )
+            ],
+            "confidence_buckets": [
+                {"range": "0~0.2", "count": conf_buckets[0]},
+                {"range": "0.2~0.4", "count": conf_buckets[1]},
+                {"range": "0.4~0.6", "count": conf_buckets[2]},
+                {"range": "0.6~0.8", "count": conf_buckets[3]},
+                {"range": "0.8~1.0", "count": conf_buckets[4]},
+            ],
+            "trend": trend,
+            "correction_counts": correction_counts,
+            "days": days,
+        }
+
+    async def list_review_entities(
+        self,
+        user_id: uuid.UUID,
+        *,
+        max_confidence: float = 0.75,
+        type_: str | None = None,
+        include_verified: bool = False,
+        limit: int = 50,
+    ) -> list[dict]:
+        """Tab 2「审查列表」:筛选低置信度实体(默认 < 0.75 且未 verify)。"""
+        from app.repositories.neo4j.memory_graph_repository import (
+            MemoryGraphRepository,
+        )
+
+        entities = await MemoryGraphRepository().list_all_entities(str(user_id))
+        out: list[dict] = []
+        for e in entities:
+            conf = float(e.get("confidence", 0.8) or 0.8)
+            if conf > max_confidence:
+                continue
+            if not include_verified and e.get("human_verified"):
+                continue
+            if type_ and e.get("type") != type_:
+                continue
+            out.append({
+                "id": e.get("id"),
+                "name": e.get("name"),
+                "type": e.get("type"),
+                "description": e.get("description"),
+                "aliases": e.get("aliases") or [],
+                "confidence": round(conf, 3),
+                "memory_layer": e.get("memory_layer") or "short_term",
+                "human_verified": bool(e.get("human_verified")),
+                "relations": [
+                    {
+                        "predicate": r.get("predicate"),
+                        "object_name": r.get("object_name"),
+                        "object_type": r.get("object_type"),
+                        "confidence": r.get("confidence"),
+                    }
+                    for r in (e.get("relations") or [])[:5]
+                ],
+            })
+        # 按置信度升序(最不确定的排前面给用户优先处理)
+        out.sort(key=lambda x: x["confidence"])
+        return out[:limit]
+
+    async def confirm_entity(
+        self, user_id: uuid.UUID, entity_id: str, reason: str | None = None
+    ) -> dict:
+        """👍 用户确认实体正确:打 human_verified=true / confidence=1.0,落 memory_corrections。"""
+        from app.repositories.memory_correction_repository import (
+            MemoryCorrectionRepository,
+        )
+        from app.repositories.neo4j.memory_graph_repository import (
+            MemoryGraphRepository,
+        )
+
+        uid = str(user_id)
+        repo = MemoryGraphRepository()
+        before = await repo.entity_snapshot(uid, entity_id) or {}
+        await repo.human_verify_entity(uid, entity_id)
+        # 落 PG(失败只 warning 不阻断 Neo4j 已生效的操作)
+        try:
+            await MemoryCorrectionRepository(self.session).record(
+                user_id=user_id,
+                entity_id=entity_id,
+                action="confirm",
+                before=_serializable(before),
+                after={"human_verified": True, "confidence": 1.0},
+                reason=reason or "用户确认",
+            )
+        except Exception as e:  # noqa: BLE001
+            logger.warning("memory_corrections 写入失败(不影响 Neo4j 已生效): %s", e)
+        return {"ok": True, "entity_id": entity_id}
+
+    async def correct_entity_with_reason(
+        self,
+        user_id: uuid.UUID,
+        entity_id: str,
+        *,
+        name: str | None = None,
+        type_: str | None = None,
+        description: str | None = None,
+        aliases: list[str] | None = None,
+        reason: str | None = None,
+    ) -> dict:
+        """✏️ 用户修正实体属性。任一字段 None 即不改。"""
+        from app.repositories.memory_correction_repository import (
+            MemoryCorrectionRepository,
+        )
+        from app.repositories.neo4j.memory_graph_repository import (
+            MemoryGraphRepository,
+        )
+
+        uid = str(user_id)
+        repo = MemoryGraphRepository()
+        before = await repo.entity_snapshot(uid, entity_id) or {}
+        result = await repo.correct_entity(
+            uid, entity_id,
+            name=name, type_=type_, description=description, aliases=aliases,
+        )
+        after = {
+            "name": result.get("name") if result else name,
+            "type": result.get("type") if result else type_,
+            "description": description,
+            "aliases": aliases,
+            "human_verified": True,
+            "confidence": 1.0,
+        }
+        try:
+            await MemoryCorrectionRepository(self.session).record(
+                user_id=user_id,
+                entity_id=entity_id,
+                action="correct",
+                before=_serializable(before),
+                after={k: v for k, v in after.items() if v is not None},
+                reason=reason or "用户修正",
+            )
+        except Exception as e:  # noqa: BLE001
+            logger.warning("memory_corrections 写入失败: %s", e)
+        return {"ok": True, "entity_id": entity_id, "name": after["name"]}
+
+    async def delete_entity_with_reason(
+        self, user_id: uuid.UUID, entity_id: str, reason: str | None = None
+    ) -> dict:
+        """🗑 用户删除实体(理由可选)。删除前快照入 memory_corrections,失败可回滚。"""
+        from app.repositories.memory_correction_repository import (
+            MemoryCorrectionRepository,
+        )
+        from app.repositories.neo4j.memory_graph_repository import (
+            MemoryGraphRepository,
+        )
+
+        uid = str(user_id)
+        repo = MemoryGraphRepository()
+        before = await repo.entity_snapshot(uid, entity_id) or {}
+        # 先落 PG 再删 Neo4j —— 若 PG 失败则不删,避免「数据没了又没记录」
+        try:
+            await MemoryCorrectionRepository(self.session).record(
+                user_id=user_id,
+                entity_id=entity_id,
+                action="delete",
+                before=_serializable(before),
+                reason=reason or "用户删除",
+            )
+        except Exception as e:  # noqa: BLE001
+            logger.warning("delete 落库失败,放弃删除: %s", e)
+            return {"ok": False, "error": "落库失败,已取消删除"}
+        await repo.delete_entity(uid, entity_id)
+        return {"ok": True, "entity_id": entity_id}
+
     async def list_communities(self, user_id: uuid.UUID) -> list[dict]:
         """社区列表（名称/摘要/成员数）。"""
         from app.repositories.neo4j.community_repository import CommunityRepository
@@ -330,3 +572,27 @@ class MemoryService:
             "graph_stats": memory.graph_stats,
             "created_at": memory.created_at.isoformat() if memory.created_at else None,
         }
+
+
+
+# ── 工具:把 Neo4j 返回的对象转成可 JSON 序列化的 dict ──
+
+def _serializable(snapshot: dict) -> dict:
+    """Neo4j DateTime / Date 等转字符串,保证 JSONB 写入不炸。"""
+    out: dict = {}
+    for k, v in (snapshot or {}).items():
+        if hasattr(v, "to_native"):
+            try:
+                out[k] = v.to_native().isoformat()
+            except Exception:  # noqa: BLE001
+                out[k] = str(v)
+        elif isinstance(v, (str, int, float, bool)) or v is None:
+            out[k] = v
+        elif isinstance(v, list):
+            out[k] = [
+                x if isinstance(x, (str, int, float, bool)) else str(x)
+                for x in v
+            ]
+        else:
+            out[k] = str(v)
+    return out

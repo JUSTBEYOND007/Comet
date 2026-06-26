@@ -18,10 +18,12 @@ import asyncio
 import re
 import uuid
 from collections.abc import AsyncGenerator
+from typing import Any
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import settings
+from app.core.agent.loop.controller import LoopController, RepairCallbackArgs
 from app.core.agent.research.curator import curate_outline
 from app.core.agent.research.distiller import distill_sources
 from app.core.agent.research.models import (
@@ -155,10 +157,21 @@ async def run_research(
     user_id: uuid.UUID,
     topic: str,
     kb_ids: list[str] | None = None,
+    report_id: uuid.UUID | None = None,
 ) -> AsyncGenerator[dict, None]:
     """执行一次深度研究（v2：规划→检索→逐源提炼→反思补搜→大纲整理→分节写作→汇总）。
 
+    V0.0.5 ② 起末尾接入 Verifier Loop：独立 LLM-as-judge 复核 + 不合格自动 Patch / 章节重写。
+    可通过 `settings.loop_enabled = False` 关闭(行为退回到 v2 原流程)。
+
     内部各步降级处理，尽量产出报告；引擎为纯异步生成器，与传输层解耦。
+
+    Args:
+        session: DB session(读取模型配置 + 走 Verifier Loop 时落库)
+        user_id: 当前用户
+        topic: 研究主题
+        kb_ids: 知识库 id 过滤(None = 不限)
+        report_id: 关联的 research_reports.id,Verifier Loop 用它关联 loop_runs(可选)
     """
     from app.core.llm.chat_model import (
         build_default_chat_model,
@@ -302,13 +315,142 @@ async def run_research(
 
     # ── 8. 拼装 + 引用映射 ──
     markdown = _build_markdown(plan.title, summary, written, sources)
+
+    # ── 9. Verifier Loop(V0.0.5 ②):独立 LLM-as-judge 复核 + 不合格 Patch/Rewrite 回炉 ──
+    final_markdown = markdown
+    final_sources = list(sources)
+    if not settings.loop_enabled:
+        # 开关关闭:跳过质量复核,行为与 v2 原流程一致
+        yield {
+            "type": "report",
+            "title": plan.title,
+            "markdown": final_markdown,
+            "sources": [
+                {"index": s.index, "type": s.type, "title": s.title, "url": s.url}
+                for s in final_sources
+            ],
+        }
+        return
+
+    # ── 闭包内可变状态(给 callback 用,可跨多轮累加 sources/learnings 与重写章节)──
+    loop_sources: list[Source] = list(sources)
+    loop_learnings: list[Learning] = list(learnings)
+    loop_written: list[tuple[str, str]] = list(written)
+    loop_summary: dict = dict(summary or {})
+
+    def _rebuild_artifact() -> dict[str, Any]:
+        md = _build_markdown(plan.title, loop_summary, loop_written, loop_sources)
+        return {
+            "title": plan.title,
+            "markdown": md,
+            "sources": [
+                {"index": s.index, "type": s.type, "title": s.title, "url": s.url}
+                for s in loop_sources
+            ],
+            "headings": [h for h, _ in loop_written],
+        }
+
+    initial_artifact = _rebuild_artifact()
+
+    async def patch_callback(queries: list[str]) -> dict[str, Any]:
+        """Patch:用 verifier 给的子查询补搜补提炼,把新要点作为「补充信息」追加到报告。"""
+        try:
+            new_sources = await _retrieve(None, queries, len(loop_sources) + 1)
+            if not new_sources:
+                return _rebuild_artifact()
+            loop_sources.extend(new_sources)
+            new_learnings = await distill_sources(
+                model, topic, [h for h, _ in loop_written], new_sources, emit=None
+            )
+            if not new_learnings:
+                return _rebuild_artifact()
+            loop_learnings.extend(new_learnings)
+            # 简化合并:把新要点整理为一个「补充信息」章节追加(避免重写正文章节,成本低)
+            supp_heading = "补充信息(质量复核反馈后追加)"
+            supp_lines = [
+                f"- {le.text} [来源 {le.source_index}]" for le in new_learnings
+            ]
+            supp_content = "\n".join(supp_lines) if supp_lines else "(无补充)"
+            # 替换或追加
+            idx = next(
+                (i for i, (h, _) in enumerate(loop_written) if h == supp_heading), None
+            )
+            if idx is None:
+                loop_written.append((supp_heading, supp_content))
+            else:
+                loop_written[idx] = (
+                    supp_heading,
+                    (loop_written[idx][1] + "\n" + supp_content).strip(),
+                )
+            return _rebuild_artifact()
+        except Exception as e:  # noqa: BLE001
+            logger.warning("patch_callback 失败,沿用旧报告: %s", e)
+            return _rebuild_artifact()
+
+    async def rewrite_callback(chapters: list[str]) -> dict[str, Any]:
+        """Rewrite:重写指定章节(用 curated thesis + 已有 learnings 重新调 writer)。"""
+        try:
+            heading_to_curated = {c.heading: c for c in curated}
+            for ch in chapters:
+                cur = heading_to_curated.get(ch)
+                if cur is None:
+                    continue
+                sec_learnings = [
+                    loop_learnings[lid - 1]
+                    for lid in cur.learning_ids
+                    if 1 <= lid <= len(loop_learnings)
+                ]
+                buf: list[str] = []
+                async for tok in write_section_stream(
+                    model, plan.title, cur.heading, cur.thesis, sec_learnings, []
+                ):
+                    buf.append(tok)
+                new_content = "".join(buf).strip() or "(本章节暂无内容)"
+                idx = next(
+                    (i for i, (h, _) in enumerate(loop_written) if h == ch), None
+                )
+                if idx is not None:
+                    loop_written[idx] = (ch, new_content)
+            return _rebuild_artifact()
+        except Exception as e:  # noqa: BLE001
+            logger.warning("rewrite_callback 失败,沿用旧报告: %s", e)
+            return _rebuild_artifact()
+
+    # 跑 LoopController:产出 loop_started / loop_verify_start/done / loop_repair_start/done / loop_finished 事件
+    try:
+        controller = LoopController(
+            session=session,
+            user_id=user_id,
+            task_type="research",
+            task_id=report_id,
+            max_iterations=settings.loop_max_iterations,
+        )
+        async for ev in controller.run(
+            topic=topic,
+            initial_artifact=initial_artifact,
+            verifier_kind=settings.loop_verifier_kind,
+            generator_model=model,
+            generator_model_name=getattr(config, "model_name", "") or "",
+            repair_ctx=RepairCallbackArgs(
+                patch_callback=patch_callback,
+                rewrite_callback=rewrite_callback,
+            ),
+        ):
+            if ev.get("type") == "loop_finished":
+                final = ev.get("final_artifact") or {}
+                final_markdown = final.get("markdown") or final_markdown
+            yield ev
+    except Exception as e:  # noqa: BLE001
+        # Loop 整体异常:沿用原报告,业务不阻断
+        logger.warning("Verifier Loop 运行异常,沿用原报告: %s", e, exc_info=True)
+
     yield {
         "type": "report",
         "title": plan.title,
-        "markdown": markdown,
+        "markdown": final_markdown,
         "sources": [
             {"index": s.index, "type": s.type, "title": s.title, "url": s.url}
-            for s in sources
+            for s in loop_sources
         ],
     }
 

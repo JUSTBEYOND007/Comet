@@ -54,6 +54,79 @@ export interface ResearchStep {
   text: string
 }
 
+// V0.0.5 ② Verifier Loop:SSE 事件 payload + LoopRun 详情类型
+export interface LoopVerifyScore {
+  raw: Record<string, number>   // {coverage: 4, faithfulness: 4.5, ...} 原始 0~5 分
+  total: number                  // 加权归一总分 0~1
+}
+export interface LoopVerifyStartEvent {
+  iteration: number
+}
+export interface LoopVerifyDoneEvent {
+  iteration: number
+  scores: LoopVerifyScore | Record<string, never>
+  feedback_summary?: string
+  decision: 'pass' | 'retry_patch' | 'retry_rewrite' | 'exceed'
+  note?: string
+}
+export interface LoopRepairStartEvent {
+  iteration: number
+  kind: 'patch' | 'chapter_rewrite' | 'force_exceed'
+  rationale?: string
+  patch_queries?: string[]
+  rewrite_chapters?: string[]
+}
+export interface LoopFinishedEvent {
+  status: 'passed' | 'exceeded' | 'failed'
+  final_score: number | null
+  iterations: number
+  note?: string | null
+  final_artifact?: Record<string, unknown>
+}
+export interface LoopStartedEvent {
+  run_id: string
+  rubric: string
+  max_iterations: number
+  pass_threshold: number
+}
+export interface LoopIterationDetail {
+  iteration_no: number
+  scores: { raw: Record<string, number>; total: number } | Record<string, never>
+  feedback: {
+    summary?: string
+    issues?: { dim: string; detail: string }[]
+    missing_coverage?: string[]
+    wrong_citations?: number[]
+    weak_chapters?: string[]
+  }
+  decision: string
+  repair_action: {
+    kind: string
+    patch_queries?: string[]
+    rewrite_chapters?: string[]
+    rationale?: string
+  } | null
+  duration_ms: number | null
+  artifact_snapshot: Record<string, unknown>
+}
+export interface LoopDetail {
+  run_id: string
+  task_type: string
+  status: 'running' | 'passed' | 'failed' | 'exceeded'
+  iterations: number
+  final_score: number | null
+  pass_threshold: number
+  max_iterations: number
+  rubric_name: string | null
+  generator_model: string | null
+  verifier_model: string | null
+  verifier_kind: string | null
+  note: string | null
+  started_at: string | null
+  finished_at: string | null
+  iterations_detail: LoopIterationDetail[]
+}
+
 export interface ResearchStreamHandlers {
   onMeta?: (d: { report_id: string; topic: string }) => void
   onStatus?: (d: { phase: string; detail: string }) => void
@@ -66,6 +139,13 @@ export interface ResearchStreamHandlers {
   onReport?: (d: { title: string; markdown: string; sources: ResearchSource[] }) => void
   onDone?: (d: { report_id: string }) => void
   onError?: (message: string) => void
+  // V0.0.5 ② Verifier Loop:6 个新事件
+  onLoopStarted?: (d: LoopStartedEvent) => void
+  onLoopVerifyStart?: (d: LoopVerifyStartEvent) => void
+  onLoopVerifyDone?: (d: LoopVerifyDoneEvent) => void
+  onLoopRepairStart?: (d: LoopRepairStartEvent) => void
+  onLoopRepairDone?: (d: { iteration: number; kind: string }) => void
+  onLoopFinished?: (d: LoopFinishedEvent) => void
   // 续传快照
   onResume?: (d: {
     phase: string
@@ -95,6 +175,10 @@ export const researchApi = {
       `/research/${id}/save-to-kb`,
       { kb_id: kbId ?? null },
     )
+  },
+  // V0.0.5 ② Verifier Loop 详情:无 LoopRun(loop_enabled 关 / engine 异常时) → 返回 null
+  loopDetail(id: string) {
+    return client.get<unknown, Wrapped<LoopDetail | null>>(`/research/${id}/loop`)
   },
   optimizeTopic(topic: string) {
     return client.post<unknown, Wrapped<{ optimized: string }>>(
@@ -193,6 +277,25 @@ function dispatch(
       break
     case 'error':
       h.onError?.((payload.message as string) ?? '研究失败')
+      break
+    // V0.0.5 ② Verifier Loop 事件
+    case 'loop_started':
+      h.onLoopStarted?.(payload as never)
+      break
+    case 'loop_verify_start':
+      h.onLoopVerifyStart?.(payload as never)
+      break
+    case 'loop_verify_done':
+      h.onLoopVerifyDone?.(payload as never)
+      break
+    case 'loop_repair_start':
+      h.onLoopRepairStart?.(payload as never)
+      break
+    case 'loop_repair_done':
+      h.onLoopRepairDone?.(payload as never)
+      break
+    case 'loop_finished':
+      h.onLoopFinished?.(payload as never)
       break
   }
 }

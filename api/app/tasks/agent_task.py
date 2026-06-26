@@ -140,9 +140,16 @@ async def _do_run(tid: uuid.UUID) -> None:
                 await AgentTaskRepository(session).save(task)
         logger.info("定时任务执行完成: id=%s ok=%s", tid, ok)
 
-        # 4) 成功且任务开启推送 → 把报告 TL;DR 推到用户的消息渠道（失败降级不影响任务）
+        # 4) 成功且任务开启推送 → 检查 Verifier Loop 通过状态;不合格则不推送(避免低质量内容打扰)
         if ok and notify_enabled:
-            await _notify_user(sm, user_id, report_id, instruction)
+            verified = await _check_loop_passed(sm, report_id)
+            if verified:
+                await _notify_user(sm, user_id, report_id, instruction)
+            else:
+                logger.info(
+                    "定时任务 Verifier Loop 未通过,跳过手机推送: report=%s task=%s",
+                    report_id, tid,
+                )
     finally:
         await engine_db.dispose()
 
@@ -158,7 +165,7 @@ async def _execute_research(
     holder: dict = {"md": None, "sources": [], "title": None, "outline": None, "partial": ""}
 
     async def _collect(session: AsyncSession) -> None:
-        async for ev in run_research(session, user_id, topic, kb_ids):
+        async for ev in run_research(session, user_id, topic, kb_ids, report_id=report_id):
             etype = ev.get("type")
             if etype == "plan":
                 holder["outline"] = {
@@ -288,3 +295,35 @@ async def _notify_user(
                 logger.info("定时任务推送完成: report=%s 渠道数=%d", report_id, sent)
     except Exception as e:  # noqa: BLE001
         logger.warning("定时任务推送失败（忽略）: report=%s err=%s", report_id, e)
+
+
+async def _check_loop_passed(
+    sm: async_sessionmaker, report_id: uuid.UUID
+) -> bool:
+    """检查 research engine 已跑过的 Verifier Loop 通过状态。
+
+    V0.0.5 ② 设计:engine 内已经接 LoopController(task_type=research, task_id=report_id),
+    定时任务**不重复跑 verify**,只读结果决定要不要推送。
+
+    返回 True 当且仅当:
+    - Loop 关闭(settings.loop_enabled=False) → 视为通过(无评分时不阻塞推送)
+    - 找到 LoopRun 且 status=passed
+    其他情况(exceeded / failed / 未找到)→ 视为未通过,跳过推送。
+    """
+    if not settings.loop_enabled:
+        return True
+    try:
+        from app.core.agent.loop.store import LoopStore
+        from app.models.loop_model import STATUS_PASSED
+
+        async with sm() as session:
+            run = await LoopStore(session).find_latest_by_task(
+                task_type="research", task_id=report_id
+            )
+            if run is None:
+                logger.info("Verifier Loop 未找到对应 run,降级视为通过: report=%s", report_id)
+                return True  # 没跑过(可能是引擎里 verifier 早期异常),不阻塞推送
+            return run.status == STATUS_PASSED
+    except Exception as e:  # noqa: BLE001
+        logger.warning("查 LoopRun 失败,降级视为通过: report=%s err=%s", report_id, e)
+        return True

@@ -166,6 +166,10 @@ class ResearchService:
                 "report",
             }:
                 yield _sse(ev, data)
+            elif ev and ev.startswith("loop_"):
+                # V0.0.5 ② Verifier Loop 事件直通(loop_started / loop_verify_start /
+                # loop_verify_done / loop_repair_start / loop_repair_done / loop_finished)
+                yield _sse(ev, data)
             elif ev == "done":
                 yield _sse("done", data)
                 return
@@ -209,7 +213,9 @@ class ResearchService:
             async with SessionLocal() as session:
                 await self._set_status(session, report_id, "planning")
                 await _flush("generating")
-                async for ev in run_research(session, user_id, body.topic.strip(), kb_ids):
+                async for ev in run_research(
+                    session, user_id, body.topic.strip(), kb_ids, report_id=report_id
+                ):
                     etype = ev.get("type")
                     if etype == "status":
                         phase = ev.get("phase", phase)
@@ -256,6 +262,12 @@ class ResearchService:
                         final_sources = ev.get("sources", [])
                         final_title = ev.get("title", title)
                         await bus.publish(rid, "report", ev)
+                    elif etype and etype.startswith("loop_"):
+                        # V0.0.5 ② Verifier Loop 全套事件透传给前端
+                        # (loop_started / loop_verify_start / loop_verify_done /
+                        #  loop_repair_start / loop_repair_done / loop_finished)
+                        await bus.publish(rid, etype, ev)
+                        await _flush("generating")
                     elif etype == "error":
                         raise RuntimeError(ev.get("message", "研究失败"))
 
@@ -441,6 +453,51 @@ class ResearchService:
     ) -> dict:
         report = await self._get_or_404(user_id, report_id)
         return self.to_detail(report)
+
+    async def get_loop_detail(
+        self, user_id: uuid.UUID, report_id: uuid.UUID
+    ) -> dict | None:
+        """V0.0.5 ② Verifier Loop 详情:LoopRun + 各轮 iteration。
+
+        报告生成时未跑 verifier(loop_enabled 关 / engine 异常)→ 返回 None,前端不显示评分卡。
+        """
+        from app.core.agent.loop.store import LoopStore
+
+        # 先确认报告属于本用户(防越权)
+        await self._get_or_404(user_id, report_id)
+        store = LoopStore(self.session)
+        run = await store.find_latest_by_task(task_type="research", task_id=report_id)
+        if run is None:
+            return None
+        iterations = await store.list_iterations(run.id)
+        return {
+            "run_id": str(run.id),
+            "task_type": run.task_type,
+            "status": run.status,
+            "iterations": run.iterations,
+            "final_score": run.final_score,
+            "pass_threshold": run.pass_threshold,
+            "max_iterations": run.max_iterations,
+            "rubric_name": run.rubric_name,
+            "generator_model": run.generator_model,
+            "verifier_model": run.verifier_model,
+            "verifier_kind": run.verifier_kind,
+            "note": run.note,
+            "started_at": run.started_at.isoformat() if run.started_at else None,
+            "finished_at": run.finished_at.isoformat() if run.finished_at else None,
+            "iterations_detail": [
+                {
+                    "iteration_no": it.iteration_no,
+                    "scores": it.scores,           # {raw: {coverage:..., ...}, total: 0.78}
+                    "feedback": it.feedback,       # {summary, issues, missing_coverage, ...}
+                    "decision": it.decision,
+                    "repair_action": it.repair_action,
+                    "duration_ms": it.duration_ms,
+                    "artifact_snapshot": it.artifact_snapshot,
+                }
+                for it in iterations
+            ],
+        }
 
     async def delete(self, user_id: uuid.UUID, report_id: uuid.UUID) -> None:
         report = await self._get_or_404(user_id, report_id)

@@ -48,6 +48,84 @@ async def get_profile(
     return success(data)
 
 
+# ── V0.0.5 ⑤ 记忆审查与人类反馈闭环 ──
+
+@router.get("/review/overview")
+async def review_overview(
+    days: int = 30,
+    user: User = Depends(get_current_user),
+    session: AsyncSession = Depends(get_session),
+):
+    """Tab 1「我的记忆全景」聚合:类型分布 / 置信度直方 / 长短期 / 30 天趋势 / 纠错统计。"""
+    return success(await MemoryService(session).review_overview(user.id, days=days))
+
+
+@router.get("/review/entities")
+async def list_review_entities(
+    max_confidence: float = 0.75,
+    type: str | None = None,
+    include_verified: bool = False,
+    limit: int = 50,
+    user: User = Depends(get_current_user),
+    session: AsyncSession = Depends(get_session),
+):
+    """Tab 2 审查列表:筛选低置信度实体(默认 < 0.75 且未 verified)。"""
+    return success(
+        await MemoryService(session).list_review_entities(
+            user.id,
+            max_confidence=max_confidence,
+            type_=type,
+            include_verified=include_verified,
+            limit=limit,
+        )
+    )
+
+
+@router.post("/review/{entity_id}/confirm")
+async def confirm_entity(
+    entity_id: str,
+    body: dict | None = None,
+    user: User = Depends(get_current_user),
+    session: AsyncSession = Depends(get_session),
+):
+    """👍 确认实体正确:human_verified=true / confidence=1.0。"""
+    reason = (body or {}).get("reason")
+    return success(await MemoryService(session).confirm_entity(user.id, entity_id, reason))
+
+
+@router.patch("/review/{entity_id}/correct")
+async def correct_entity(
+    entity_id: str,
+    body: dict,
+    user: User = Depends(get_current_user),
+    session: AsyncSession = Depends(get_session),
+):
+    """✏️ 修正实体属性(name / type / description / aliases 任一可选)。"""
+    return success(
+        await MemoryService(session).correct_entity_with_reason(
+            user.id, entity_id,
+            name=body.get("name"),
+            type_=body.get("type"),
+            description=body.get("description"),
+            aliases=body.get("aliases"),
+            reason=body.get("reason"),
+        )
+    )
+
+
+@router.delete("/review/{entity_id}")
+async def delete_entity_with_reason(
+    entity_id: str,
+    reason: str | None = None,
+    user: User = Depends(get_current_user),
+    session: AsyncSession = Depends(get_session),
+):
+    """🗑 删除实体(可带 reason);失败可从 memory_corrections.before 回滚。"""
+    return success(
+        await MemoryService(session).delete_entity_with_reason(user.id, entity_id, reason)
+    )
+
+
 @router.delete("/entity/{entity_id}")
 async def delete_entity(
     entity_id: str,

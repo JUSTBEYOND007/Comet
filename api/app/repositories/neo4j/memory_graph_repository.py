@@ -341,6 +341,51 @@ class MemoryGraphRepository:
         async with self._driver.session() as session:
             await session.run(cq.DELETE_ENTITY, user_id=user_id, entity_id=entity_id)
 
+    # ── V0.0.5 ⑤ 人类反馈纠错 ──
+
+    async def entity_snapshot(
+        self, user_id: str, entity_id: str
+    ) -> dict[str, Any] | None:
+        """单实体当前快照(写进 memory_corrections.before 用)。"""
+        async with self._driver.session() as session:
+            result = await session.run(
+                cq.ENTITY_SNAPSHOT, user_id=user_id, entity_id=entity_id
+            )
+            record = await result.single()
+            return dict(record) if record else None
+
+    async def human_verify_entity(self, user_id: str, entity_id: str) -> bool:
+        """用户确认实体正确:human_verified=true + confidence=1.0 + 升长期记忆。"""
+        async with self._driver.session() as session:
+            result = await session.run(
+                cq.HUMAN_VERIFY_ENTITY, user_id=user_id, entity_id=entity_id
+            )
+            return (await result.single()) is not None
+
+    async def correct_entity(
+        self,
+        user_id: str,
+        entity_id: str,
+        *,
+        name: str | None = None,
+        type_: str | None = None,
+        description: str | None = None,
+        aliases: list[str] | None = None,
+    ) -> dict[str, Any] | None:
+        """修正实体属性(用户视角的「✏️ 修正」)。任一字段 None 表示不改。"""
+        async with self._driver.session() as session:
+            result = await session.run(
+                cq.CORRECT_ENTITY,
+                user_id=user_id,
+                entity_id=entity_id,
+                name=name,
+                type=type_,
+                description=description,
+                aliases=aliases,
+            )
+            record = await result.single()
+            return dict(record) if record else None
+
     async def delete_user_graph(self, user_id: str) -> None:
         """删除某用户的全部图数据（数据隔离 / 重置用）。"""
         async with self._driver.session() as session:

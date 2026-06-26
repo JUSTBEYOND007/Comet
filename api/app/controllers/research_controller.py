@@ -112,6 +112,20 @@ async def get_report(
     return success(await ResearchService(session).get_detail(user.id, report_id))
 
 
+@router.get("/{report_id}/loop")
+async def get_report_loop(
+    report_id: uuid.UUID,
+    user: User = Depends(get_current_user),
+    session: AsyncSession = Depends(get_session),
+):
+    """V0.0.5 ② Verifier Loop 详情:LoopRun + 各轮 iteration 明细。
+
+    前端「质量评分卡」用它拉雷达图维度分 + 各轮 feedback + 模型审计。
+    报告生成时未跑 verifier(开关关闭或 engine 内部异常)时返回 None,前端不显示评分卡。
+    """
+    return success(await ResearchService(session).get_loop_detail(user.id, report_id))
+
+
 @router.delete("/{report_id}")
 async def delete_report(
     report_id: uuid.UUID,

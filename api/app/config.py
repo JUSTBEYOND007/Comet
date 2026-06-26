@@ -152,6 +152,16 @@ class Settings(BaseSettings):
     # 定时任务完成后推送通知用的站点地址（拼报告链接）
     notify_site_url: str = "https://cometxrzs.top"
 
+    # ── V0.0.5 ② Verifier Loop（Loop Engineering 落地）──
+    # 是否启用 Verifier Loop。关闭时 research engine 跳过质量复核环节,行为与之前完全一致。
+    loop_enabled: bool = True
+    # Verifier 选型:
+    #   same  — 同 chat 模型新开 session + critic prompt(基线,无需额外配置)
+    #   cross — 跨 family verifier 模型(需用户在模型配置里加 type=verifier 一条);未配则自动降级到 same
+    loop_verifier_kind: str = "same"
+    # 最大迭代轮数(N 轮不通过即 ForceExceed 标 unverified 仍展示)
+    loop_max_iterations: int = 2
+
     @property
     def database_url(self) -> str:
         return (

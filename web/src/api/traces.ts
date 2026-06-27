@@ -87,6 +87,7 @@ type Wrapped<T> = { code: number; message: string; data: T }
 export const traceApi = {
   list(params: {
     task_type?: string
+    task_id?: string
     status?: string
     days?: number
     limit?: number

@@ -23,12 +23,14 @@ import {
   FileWordOutlined,
   GlobalOutlined,
   HighlightOutlined,
+  HistoryOutlined,
   PlusOutlined,
   PrinterOutlined,
   SaveOutlined,
   ShareAltOutlined,
   UnorderedListOutlined,
 } from '@ant-design/icons'
+import { useNavigate } from 'react-router-dom'
 import MarkdownMessage from '@/components/MarkdownMessage'
 import {
   researchApi,
@@ -85,6 +87,7 @@ const STEP_ICON: Record<string, string> = {
 
 export default function ResearchPage() {
   const { message } = App.useApp()
+  const navigate = useNavigate()
   const [reports, setReports] = useState<ReportBrief[]>([])
   const [topic, setTopic] = useState('')
   const [running, setRunning] = useState(false)
@@ -796,6 +799,14 @@ export default function ResearchPage() {
                       >
                         分享
                       </Button>
+                      {currentId && !running && (
+                        <Button
+                          icon={<HistoryOutlined />}
+                          onClick={() => navigate(`/traces?task_id=${currentId}`)}
+                        >
+                          执行轨迹
+                        </Button>
+                      )}
                       <Button
                         type="primary"
                         icon={<SaveOutlined />}

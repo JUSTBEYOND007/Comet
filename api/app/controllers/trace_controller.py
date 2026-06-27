@@ -23,6 +23,7 @@ router = APIRouter(prefix="/traces", tags=["traces"])
 @router.get("")
 async def list_traces(
     task_type: str | None = Query(None, description="research / chat / agent_task / ..."),
+    task_id: uuid.UUID | None = Query(None, description="按业务 task_id 过滤(如某份研究报告/对话)"),
     status: str | None = Query(None, description="running / ok / error"),
     days: int | None = Query(None, ge=1, le=365, description="近 N 天(可选)"),
     limit: int = Query(50, ge=1, le=200),
@@ -35,6 +36,7 @@ async def list_traces(
     data: TraceListResponse = await svc.list_traces(
         user.id,
         task_type=task_type,
+        task_id=task_id,
         status=status,
         days=days,
         limit=limit,

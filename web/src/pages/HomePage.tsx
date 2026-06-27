@@ -1,56 +1,57 @@
 import { useEffect, useMemo, useState } from 'react'
-import { Button, Card, Col, Empty, Modal, Row, Spin, Tag, Tooltip } from 'antd'
+import { Button, Card, Col, Modal, Row, Tag, Tooltip } from 'antd'
 import {
   ArrowRightOutlined,
   BookOutlined,
+  BulbOutlined,
   CheckCircleFilled,
   CommentOutlined,
   CustomerServiceOutlined,
   DeploymentUnitOutlined,
+  ExperimentOutlined,
   HddOutlined,
-  PictureOutlined,
-  QuestionCircleOutlined,
-  RobotOutlined,
+  RightOutlined,
   SettingOutlined,
-  SmileOutlined,
+  ThunderboltOutlined,
 } from '@ant-design/icons'
 import { useNavigate } from 'react-router-dom'
-import ReactECharts from 'echarts-for-react'
 import dayjs from 'dayjs'
 import {
   dashboardApi,
-  type AgentBriefItem,
   type DailyReview,
-  type LoopHealthData,
-  type MemoryStatsData,
   type OverviewData,
 } from '@/api/dashboard'
-import {
-  emotionApi,
-  type EmotionDistributionItem,
-  type EmotionProfile,
-  type EmotionTrendPoint,
-} from '@/api/emotion'
+import { emotionApi, type EmotionProfile } from '@/api/emotion'
+import { memoryApi, type Insight } from '@/api/memories'
+import { researchApi, type ReportBrief } from '@/api/research'
 import { modelApi, type ModelConfigItem } from '@/api/models'
 import { useAuthStore } from '@/stores/authStore'
-import LoopHealthCard from '@/components/research/LoopHealthCard'
 
 const WELCOME_SEEN_KEY = 'comet_welcome_seen'
 
+/**
+ * 仪表盘 —— V0.0.5 收尾大瘦身:只保留日常真正高频用的 4 块。
+ *
+ * 保留:① 欢迎横幅 / ② 今日回顾+关怀 / ③ 新手引导(条件) / ④ 功能一览(主入口导航)
+ *
+ * 去掉:数据概览 6 KPI + 4 张大 ECharts(知识库分类/记忆新增/情绪趋势/情绪分布)
+ *      + Agent 简报列表 + 快速提问输入框(对话页本身就一个输入框,仪表盘不需要二重)。
+ *      Agent 工程指标(Loop 健康度 + 成本)迁去「执行轨迹 /traces」聚合在一起。
+ */
 export default function HomePage() {
   const navigate = useNavigate()
   const user = useAuthStore((s) => s.user)
   const [review, setReview] = useState<DailyReview | null>(null)
-  const [briefing, setBriefing] = useState<AgentBriefItem[]>([])
-  const [loopHealth, setLoopHealth] = useState<LoopHealthData | null>(null)
   const [overview, setOverview] = useState<OverviewData | null>(null)
-  const [memStats, setMemStats] = useState<MemoryStatsData | null>(null)
-  const [emotionProfile, setEmotionProfile] = useState<EmotionProfile | null>(null)
-  const [emotionTrend, setEmotionTrend] = useState<EmotionTrendPoint[]>([])
-  const [emotionDist, setEmotionDist] = useState<EmotionDistributionItem[]>([])
   const [models, setModels] = useState<ModelConfigItem[] | null>(null)
-  const [loading, setLoading] = useState(false)
   const [welcomeOpen, setWelcomeOpen] = useState(false)
+  // V0.0.5 仪表盘补三块"有意义"的卡:
+  // - 当前情绪画像(感知层面)
+  // - AI 眼中的你(洞察,记忆层面)
+  // - 最近一次研究(Agent 替你干活的痕迹)
+  const [emotion, setEmotion] = useState<EmotionProfile | null>(null)
+  const [insights, setInsights] = useState<Insight[]>([])
+  const [recentReport, setRecentReport] = useState<ReportBrief | null>(null)
 
   const closeWelcome = () => {
     localStorage.setItem(WELCOME_SEEN_KEY, '1')
@@ -77,43 +78,40 @@ export default function HomePage() {
     }
 
     void (async () => {
-      setLoading(true)
       try {
-        const [ov, ms] = await Promise.all([
-          dashboardApi.overview(),
-          dashboardApi.memoryStats(),
-        ])
-        setOverview(ov.data)
-        setMemStats(ms.data)
+        // overview 仍要拉(下面 quickSteps 判断 documents/conversations 用),
+        // 但页面已不再渲染 6 KPI / 4 张图,只取 counts 字段。
+        const { data } = await dashboardApi.overview()
+        if (!cancelled) setOverview(data)
       } catch {
         // 统计失败不致命
-      } finally {
-        setLoading(false)
       }
       modelApi
         .list()
         .then(({ data }) => setModels(data))
         .catch(() => setModels([]))
       fetchReview()
-      dashboardApi
-        .agentBriefing()
-        .then(({ data }) => setBriefing(data))
-        .catch(() => {})
-      dashboardApi
-        .loopHealth(30)
-        .then(({ data }) => setLoopHealth(data))
-        .catch(() => setLoopHealth(null))
+      // 情绪 / 洞察 / 最近研究 —— 失败一律降级为空,不影响其他渲染
       emotionApi
         .current()
-        .then(({ data }) => setEmotionProfile(data))
+        .then(({ data }) => {
+          if (!cancelled) setEmotion(data)
+        })
         .catch(() => {})
-      emotionApi
-        .trend(14)
-        .then(({ data }) => setEmotionTrend(data.points))
+      memoryApi
+        .insights()
+        .then(({ data }) => {
+          if (!cancelled) setInsights(data)
+        })
         .catch(() => {})
-      emotionApi
-        .distribution(30)
-        .then(({ data }) => setEmotionDist(data.items))
+      researchApi
+        .list(1, 5)
+        .then(({ data }) => {
+          if (cancelled) return
+          // 取最近 1 条已完成的研究
+          const first = data.items.find((it) => it.status === 'done') ?? null
+          setRecentReport(first)
+        })
         .catch(() => {})
     })()
 
@@ -125,7 +123,7 @@ export default function HomePage() {
 
   const c = overview?.counts
 
-  // 快速开始：根据已配置模型类型判断完成度
+  // 快速开始:根据已配模型类型 + 是否有内容判断完成度
   const modelTypes = useMemo(
     () => new Set((models ?? []).map((m) => m.type)),
     [models],
@@ -138,9 +136,9 @@ export default function HomePage() {
   const quickSteps = [
     {
       done: hasChat,
-      title: '配置对话模型（必做）',
+      title: '配置对话模型(必做)',
       icon: <SettingOutlined />,
-      desc: '先去「模型配置」加一个对话大模型，这是一切功能的基础。推荐智谱 GLM / DeepSeek（注册即送免费额度），配置页里有各家申请入口，把 API Key 填进去、测试通过即可。',
+      desc: '先去「模型配置」加一个对话大模型。推荐智谱 GLM / DeepSeek(注册即送免费额度)。',
       action: () => navigate('/settings/models'),
       btn: hasChat ? '已配置' : '去配置',
     },
@@ -148,15 +146,15 @@ export default function HomePage() {
       done: hasEmbedding,
       title: '配置向量模型',
       icon: <SettingOutlined />,
-      desc: '再加一个 embedding（向量）模型，知识库和记忆的语义检索靠它。同样在「模型配置」里添加。',
+      desc: '加一个 embedding 模型,知识库和记忆的语义检索靠它。',
       action: () => navigate('/settings/models'),
       btn: hasEmbedding ? '已配置' : '去配置',
     },
     {
       done: hasDocs,
-      title: '建立你的知识库（可选）',
+      title: '建立你的知识库(可选)',
       icon: <BookOutlined />,
-      desc: '上传文档或导入网页，系统自动分块、向量化、打标签，之后 AI 回答会自动引用你的资料。',
+      desc: '上传文档或导入网页,系统自动分块、向量化,之后 AI 回答会引用你的资料。',
       action: () => navigate('/knowledge'),
       btn: hasDocs ? '去管理' : '去上传',
     },
@@ -164,142 +162,37 @@ export default function HomePage() {
       done: hasChatted,
       title: '开始智能对话',
       icon: <CommentOutlined />,
-      desc: '配好对话模型就能直接聊。AI 会自动调用知识库、记忆、联网工具回答，并在对话后沉淀记忆，越用越懂你。',
+      desc: '配好对话模型就能直接聊。AI 会自动调用知识库、记忆、联网工具回答。',
       action: () => navigate('/chat'),
       btn: hasChatted ? '继续对话' : '去对话',
     },
   ]
 
-  // 功能导航
+  // 功能导航(精简到 6 个最高频入口)
   const features = [
     { icon: <CommentOutlined />, label: '智能对话', desc: 'Agent 工具编排问答', to: '/chat', color: '#155EEF' },
     { icon: <BookOutlined />, label: '知识库', desc: '文档/网页 RAG 检索', to: '/knowledge', color: '#369F21' },
     { icon: <HddOutlined />, label: '记忆图谱', desc: '实体关系与画像', to: '/memory', color: '#7C4DFF' },
+    { icon: <ExperimentOutlined />, label: '深度研究', desc: '一句话产出带来源报告', to: '/research', color: '#EB2F96' },
     { icon: <DeploymentUnitOutlined />, label: '图谱可视化', desc: '关系网络与时间线', to: '/graph', color: '#FF8A34' },
-    { icon: <RobotOutlined />, label: '角色配置', desc: '人设与对话偏好', to: '/settings/agent', color: '#13C2C2' },
-    { icon: <CustomerServiceOutlined />, label: '情绪音乐', desc: '随心情推荐歌单', to: '/music', color: '#EB2F96' },
+    { icon: <ThunderboltOutlined />, label: '执行轨迹', desc: 'Loop 健康度与成本', to: '/traces', color: '#FAAD14' },
+    { icon: <CustomerServiceOutlined />, label: '情绪音乐', desc: '随心情推荐歌单', to: '/music', color: '#13C2C2' },
   ]
 
-  const pieOption = {
-    tooltip: { trigger: 'item' },
-    legend: { bottom: 0, type: 'scroll' },
-    series: [
-      {
-        type: 'pie',
-        radius: ['42%', '70%'],
-        center: ['50%', '44%'],
-        data: overview?.tag_distribution ?? [],
-        label: { show: false },
-        itemStyle: { borderColor: '#fff', borderWidth: 2 },
-      },
-    ],
-  }
-
-  const lineOption = {
-    tooltip: { trigger: 'axis' },
-    grid: { left: 36, right: 16, top: 24, bottom: 28 },
-    xAxis: {
-      type: 'category',
-      boundaryGap: false,
-      data: (memStats?.trend ?? []).map((t) => t.date.slice(5)),
-    },
-    yAxis: { type: 'value', minInterval: 1 },
-    series: [
-      {
-        type: 'line',
-        smooth: true,
-        data: (memStats?.trend ?? []).map((t) => t.count),
-        areaStyle: {
-          color: {
-            type: 'linear',
-            x: 0, y: 0, x2: 0, y2: 1,
-            colorStops: [
-              { offset: 0, color: 'rgba(21,94,239,0.35)' },
-              { offset: 1, color: 'rgba(21,94,239,0.02)' },
-            ],
-          },
-        },
-        lineStyle: { width: 3 },
-        itemStyle: { color: '#155EEF' },
-      },
-    ],
-  }
-
-  const emotionTrendOption = {
-    tooltip: { trigger: 'axis' },
-    legend: { data: ['情绪倾向', '情绪强度'], top: 0 },
-    grid: { left: 36, right: 16, top: 32, bottom: 28 },
-    xAxis: {
-      type: 'category',
-      data: emotionTrend.map((t) => t.date.slice(5)),
-    },
-    yAxis: { type: 'value', min: -1, max: 1 },
-    series: [
-      {
-        name: '情绪倾向',
-        type: 'line',
-        smooth: true,
-        connectNulls: true,
-        data: emotionTrend.map((t) => (t.count > 0 ? t.avg_valence : null)),
-        itemStyle: { color: '#369F21' },
-        areaStyle: { opacity: 0.1 },
-      },
-      {
-        name: '情绪强度',
-        type: 'line',
-        smooth: true,
-        connectNulls: true,
-        data: emotionTrend.map((t) => (t.count > 0 ? t.avg_arousal : null)),
-        itemStyle: { color: '#FF8A34' },
-      },
-    ],
-  }
-
-  const emotionPieOption = {
-    tooltip: { trigger: 'item' },
-    legend: { bottom: 0, type: 'scroll' },
-    series: [
-      {
-        type: 'pie',
-        radius: ['42%', '70%'],
-        center: ['50%', '44%'],
-        data: emotionDist,
-        label: { show: false },
-        itemStyle: { borderColor: '#fff', borderWidth: 2 },
-      },
-    ],
-  }
-
-  const hasEmotion = (emotionProfile?.sample_count ?? 0) > 0
   const allReady = hasChat && hasEmbedding
   const finishedSteps = quickSteps.filter((s) => s.done).length
-  // 基础没配好（缺对话或向量模型）= 新用户态：首屏聚焦引导、隐藏空数据
-  // models 还没加载完（null）时不判定为新用户，避免闪现
+  // 基础没配好(缺对话或向量模型)= 新用户态:首屏聚焦引导
+  // models 未加载完(null)时不判定,避免闪现
   const needsSetup = models !== null && !allReady
 
-  // 欢迎引导：仅对「还没配好基础」的新用户首次弹一次，老用户不打扰
+  // 欢迎引导:仅对「还没配好基础」的新用户首次弹一次,老用户不打扰
   useEffect(() => {
     if (needsSetup && !localStorage.getItem(WELCOME_SEEN_KEY)) {
       setWelcomeOpen(true)
     }
   }, [needsSetup])
 
-  // 数据概览 KPI 卡片（情绪指数若有则置顶）
-  const healthIndex = emotionProfile?.health_index ?? 0
-  const healthColor =
-    healthIndex >= 60 ? '#369F21' : healthIndex >= 40 ? '#FF8A34' : '#FF5D34'
-  const kpis = [
-    ...(hasEmotion
-      ? [{ label: '情绪指数', value: healthIndex, icon: <SmileOutlined />, color: healthColor }]
-      : []),
-    { label: '文档', value: c?.documents ?? 0, icon: <BookOutlined />, color: '#369F21' },
-    { label: '图片', value: c?.images ?? 0, icon: <PictureOutlined />, color: '#FF8A34' },
-    { label: '对话', value: c?.conversations ?? 0, icon: <CommentOutlined />, color: '#155EEF' },
-    { label: '记忆实体', value: c?.entities ?? 0, icon: <HddOutlined />, color: '#7C4DFF' },
-    { label: '记忆社区', value: c?.communities ?? 0, icon: <DeploymentUnitOutlined />, color: '#EB2F96' },
-  ]
-
-  // ── 各区块抽成元素，按「新用户态 / 常用态」组合 ──
+  // ── 区块 ──
 
   const welcomeModal = (
     <Modal
@@ -314,8 +207,8 @@ export default function HomePage() {
         <div style={{ fontSize: 34, marginBottom: 6 }}>👋</div>
         <h2 style={{ margin: '0 0 8px', fontSize: 22 }}>欢迎使用彗记 Comet</h2>
         <p style={{ color: '#475467', lineHeight: 1.85, margin: '0 0 14px' }}>
-          这是你的个人 AI 知识库 + 记忆助手：和 AI 对话、把文档/网页存进知识库让它引用、
-          它还会自动记住你聊过的事，越用越懂你。
+          这是你的个人 AI 知识库 + 记忆助手:和 AI 对话、把文档/网页存进知识库让它引用、
+          它还会自动记住你聊过的事,越用越懂你。
         </p>
         <div
           style={{
@@ -329,9 +222,9 @@ export default function HomePage() {
             marginBottom: 18,
           }}
         >
-          <b>开始前只需一步：</b>配置一个大模型 API。
+          <b>开始前只需一步:</b>配置一个大模型 API。
           <br />
-          推荐 <b>智谱 GLM</b> 或 <b>DeepSeek</b>（注册即送免费额度），
+          推荐 <b>智谱 GLM</b> 或 <b>DeepSeek</b>(注册即送免费额度),
           在「模型配置」页填入 API Key 即可。
         </div>
         <div style={{ display: 'flex', gap: 10, justifyContent: 'center' }}>
@@ -371,19 +264,18 @@ export default function HomePage() {
             基础配置已就绪
           </Tag>
         ) : (
-          <Tag color="warning">第一步：先配置对话模型</Tag>
+          <Tag color="warning">第一步:先配置对话模型</Tag>
         )
       }
     >
       {needsSetup && (
         <p style={{ margin: '0 0 16px', color: '#475467', lineHeight: 1.8 }}>
-          完成下面几步，就能开始和你的 AI 助手对话啦 👇 其中{' '}
-          <b style={{ color: '#155EEF' }}>配置对话模型是必做项</b>，没配好其他功能都用不了。
+          完成下面几步,就能开始和你的 AI 助手对话啦 👇 其中{' '}
+          <b style={{ color: '#155EEF' }}>配置对话模型是必做项</b>,没配好其他功能都用不了。
         </p>
       )}
       <Row gutter={[14, 14]}>
         {quickSteps.map((step, i) => {
-          // 高亮"当前应做"的第一个未完成步骤
           const firstTodo = quickSteps.findIndex((s) => !s.done)
           const isCurrent = !step.done && i === firstTodo
           return (
@@ -429,7 +321,7 @@ export default function HomePage() {
     >
       <Row gutter={[14, 14]}>
         {features.map((f) => (
-          <Col xs={12} sm={8} md={8} lg={4} key={f.label}>
+          <Col xs={12} sm={8} md={8} lg={6} xl={6} key={f.label}>
             <div
               className="qs-step"
               style={{ cursor: 'pointer', alignItems: 'center' }}
@@ -454,29 +346,62 @@ export default function HomePage() {
     </Card>
   )
 
+  // 😊 今日心情小药丸 —— 合并到「今日回顾」卡右上角 extra,不单独占行。
+  const moodEmoji = (() => {
+    if (!emotion) return '🙂'
+    if (emotion.avg_valence > 0.3) return '😊'
+    if (emotion.avg_valence > 0) return '🙂'
+    if (emotion.avg_valence > -0.3) return '😐'
+    return '😔'
+  })()
+  const moodColor = (() => {
+    if (!emotion) return '#155EEF'
+    if (emotion.health_index >= 60) return '#369F21'
+    if (emotion.health_index >= 40) return '#FF8A34'
+    return '#FF5D34'
+  })()
+  const moodChip = emotion && emotion.sample_count > 0 && (
+    <Tooltip title={`基于近期 ${emotion.sample_count} 条对话感知 · 点击查看记忆画像`}>
+      <span
+        onClick={() => navigate('/memory')}
+        style={{
+          display: 'inline-flex',
+          alignItems: 'center',
+          gap: 6,
+          padding: '4px 12px',
+          background: `${moodColor}14`,
+          border: `1px solid ${moodColor}33`,
+          borderRadius: 999,
+          cursor: 'pointer',
+          fontSize: 13,
+          color: '#1D2129',
+          transition: 'transform 0.15s',
+          userSelect: 'none',
+        }}
+        onMouseEnter={(e) => {
+          e.currentTarget.style.transform = 'translateY(-1px)'
+        }}
+        onMouseLeave={(e) => {
+          e.currentTarget.style.transform = 'translateY(0)'
+        }}
+      >
+        <span style={{ fontSize: 16 }}>{moodEmoji}</span>
+        <span style={{ color: '#98A2B3' }}>今日心情</span>
+        <span style={{ fontWeight: 600 }}>{emotion.dominant_emotion || '中性'}</span>
+        <span style={{ color: moodColor, fontWeight: 600 }}>{emotion.health_index}%</span>
+      </span>
+    </Tooltip>
+  )
+
   const reviewCard = (
     <Card
       title="📅 今日回顾"
       style={{ marginBottom: 22, borderRadius: 16 }}
-      extra={
-        review?.stats && (
-          <span style={{ color: '#98A2B3', fontSize: 13 }}>
-            对话 {review.stats.messages} · 记忆 {review.stats.memories} · 文档{' '}
-            {review.stats.documents}
-            {review.stats.songs ? ` · 听歌 ${review.stats.songs}` : ''}
-          </span>
-        )
-      }
+      extra={moodChip || undefined}
     >
       <p style={{ margin: 0, color: '#475467', lineHeight: 1.8, whiteSpace: 'pre-wrap' }}>
         {review?.content ?? '加载中…'}
       </p>
-      {review?.generating && (
-        <div style={{ marginTop: 8, color: '#98A2B3', fontSize: 12 }}>
-          <Spin size="small" style={{ marginRight: 6 }} />
-          正在生成今日回顾…
-        </div>
-      )}
       {review?.care && (
         <div className="daily-care">
           <span className="daily-care-text">💛 {review.care}</span>
@@ -496,134 +421,143 @@ export default function HomePage() {
     </Card>
   )
 
-  const briefingCard = briefing.length > 0 && (
+  // � 今日心情已合并到今日回顾卡 extra(见上),此处保留 AI 洞察分隔
+  const topInsights = useMemo(
+    () =>
+      [...insights]
+        .sort((a, b) => (b.importance ?? 0) - (a.importance ?? 0))
+        .slice(0, 3),
+    [insights],
+  )
+  const insightsCard = topInsights.length > 0 && (
     <Card
-      title="🤖 今日 Agent 简报"
+      title={
+        <span>
+          <BulbOutlined style={{ color: '#FAAD14', marginRight: 6 }} />
+          AI 眼中的你
+          <span style={{ color: '#98A2B3', fontWeight: 400, fontSize: 12, marginLeft: 10 }}>
+            从你的对话与记忆中提炼的洞察
+          </span>
+        </span>
+      }
       style={{ marginBottom: 22, borderRadius: 16 }}
+      styles={{ body: { padding: 14 } }}
       extra={
-        <Button type="link" size="small" onClick={() => navigate('/research')}>
-          全部报告
+        <Button type="link" size="small" onClick={() => navigate('/memory')}>
+          全部洞察
         </Button>
       }
     >
-      <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-        {briefing.map((b) => (
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+        {topInsights.map((it) => (
           <div
-            key={b.id}
-            onClick={() => navigate('/research')}
+            key={it.id}
+            onClick={() => navigate('/memory')}
             style={{
               display: 'flex',
-              alignItems: 'center',
-              gap: 8,
-              padding: '8px 10px',
-              borderRadius: 10,
-              background: '#f7f9fc',
+              alignItems: 'flex-start',
+              gap: 12,
+              padding: '12px 14px',
+              borderRadius: 12,
+              background: 'linear-gradient(135deg, #fff8e6 0%, #ffffff 65%)',
+              border: '1px solid #ffe7a3',
               cursor: 'pointer',
+              transition: 'box-shadow 0.18s',
+            }}
+            onMouseEnter={(e) => {
+              e.currentTarget.style.boxShadow = '0 4px 14px rgba(250,173,20,0.12)'
+            }}
+            onMouseLeave={(e) => {
+              e.currentTarget.style.boxShadow = 'none'
             }}
           >
-            <span style={{ fontSize: 16 }}>{b.scheduled ? '⏰' : '🔬'}</span>
-            <span style={{ flex: 1, minWidth: 0, fontSize: 14, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-              {b.title}
-            </span>
-            {b.scheduled && <Tag color="blue">定时</Tag>}
-            <span style={{ color: '#98A2B3', fontSize: 12 }}>
-              {b.created_at ? dayjs(b.created_at).format('MM-DD HH:mm') : ''}
-            </span>
+            <span style={{ fontSize: 18 }}>💡</span>
+            <div style={{ flex: 1, minWidth: 0 }}>
+              <div
+                style={{
+                  fontSize: 13,
+                  fontWeight: 600,
+                  color: '#1D2129',
+                  marginBottom: 2,
+                }}
+              >
+                {it.theme}
+              </div>
+              <div
+                style={{
+                  fontSize: 13,
+                  color: '#475467',
+                  lineHeight: 1.65,
+                }}
+              >
+                {it.content}
+              </div>
+            </div>
           </div>
         ))}
       </div>
     </Card>
   )
 
-  // V0.0.5 ② Loop 健康度卡(没数据时不显示,避免新用户看到空卡)
-  const loopHealthCard = loopHealth && loopHealth.total > 0 && (
-    <div style={{ marginBottom: 22 }}>
-      <LoopHealthCard data={loopHealth} />
-    </div>
-  )
-
-  const dataSection = (
-    <>
-      <div className="dash-section-title">📊 数据概览</div>
-      {loading ? (
-        <div style={{ textAlign: 'center', padding: 40 }}>
-          <Spin />
+  // 🔬 最近一次研究 —— 1 行卡,没完成的研究不显示
+  const recentResearchCard = recentReport && (
+    <Card
+      style={{ marginBottom: 22, borderRadius: 16 }}
+      styles={{ body: { padding: 14 } }}
+    >
+      <div
+        onClick={() => navigate(`/research?report=${recentReport.id}`)}
+        style={{
+          display: 'flex',
+          alignItems: 'center',
+          gap: 14,
+          padding: '6px 4px',
+          cursor: 'pointer',
+        }}
+      >
+        <div
+          style={{
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            width: 44,
+            height: 44,
+            borderRadius: 12,
+            background: '#f3edff',
+            color: '#7C4DFF',
+            fontSize: 20,
+          }}
+        >
+          🔬
         </div>
-      ) : (
-        <div className="dash-kpi-grid">
-          {kpis.map((k) => (
-            <div className="stat-card" key={k.label}>
-              <div className="stat-card__bar" style={{ background: k.color }} />
-              <div
-                className="stat-card__icon"
-                style={{ background: `${k.color}1a`, color: k.color }}
-              >
-                {k.icon}
-              </div>
-              <div className="stat-card__value">{k.value}</div>
-              <div className="stat-card__label">{k.label}</div>
-            </div>
-          ))}
-        </div>
-      )}
-
-      <Row gutter={[16, 16]} style={{ marginTop: 16 }}>
-        <Col xs={24} md={12}>
-          <Card title="知识库分类分布" style={{ borderRadius: 16 }}>
-            {loading ? (
-              <div style={{ textAlign: 'center', padding: 40 }}>
-                <Spin />
-              </div>
-            ) : overview?.tag_distribution.length ? (
-              <ReactECharts option={pieOption} style={{ height: 280 }} />
-            ) : (
-              <Empty description="还没有分类标签" />
-            )}
-          </Card>
-        </Col>
-        <Col xs={24} md={12}>
-          <Card title="近 14 天记忆新增" style={{ borderRadius: 16 }}>
-            {memStats?.trend.length ? (
-              <ReactECharts option={lineOption} style={{ height: 280 }} />
-            ) : (
-              <Empty description="暂无记忆数据" />
-            )}
-          </Card>
-        </Col>
-      </Row>
-
-      <Row gutter={[16, 16]} style={{ marginTop: 16 }}>
-        <Col xs={24} md={12}>
-          <Card
-            title={
-              <span>
-                近 14 天情绪趋势
-                <Tooltip title="情绪倾向：越高越积极开心、越低越消极低落（范围 -1~1）；情绪强度：越高情绪越激动强烈、越低越平静（范围 -1~1）。由 AI 从你的对话中感知。">
-                  <QuestionCircleOutlined style={{ marginLeft: 6, color: '#98a2b3', fontSize: 13 }} />
-                </Tooltip>
-              </span>
-            }
-            style={{ borderRadius: 16 }}
+        <div style={{ flex: 1, minWidth: 0 }}>
+          <div style={{ fontSize: 12, color: '#98A2B3', marginBottom: 2 }}>
+            最近一次研究
+          </div>
+          <div
+            style={{
+              fontSize: 14,
+              fontWeight: 600,
+              color: '#1D2129',
+              overflow: 'hidden',
+              textOverflow: 'ellipsis',
+              whiteSpace: 'nowrap',
+            }}
           >
-            {hasEmotion ? (
-              <ReactECharts option={emotionTrendOption} style={{ height: 280 }} />
-            ) : (
-              <Empty description="多聊几句，AI 会感知你的情绪" />
-            )}
-          </Card>
-        </Col>
-        <Col xs={24} md={12}>
-          <Card title="近 30 天情绪分布" style={{ borderRadius: 16 }}>
-            {emotionDist.length ? (
-              <ReactECharts option={emotionPieOption} style={{ height: 280 }} />
-            ) : (
-              <Empty description="暂无情绪数据" />
-            )}
-          </Card>
-        </Col>
-      </Row>
-    </>
+            {recentReport.title || recentReport.topic}
+          </div>
+          {recentReport.created_at && (
+            <div style={{ fontSize: 11, color: '#98A2B3', marginTop: 2 }}>
+              {dayjs(recentReport.created_at).format('MM-DD HH:mm')} · 点击查看报告
+            </div>
+          )}
+        </div>
+        <RightOutlined style={{ color: '#98A2B3', fontSize: 12 }} />
+      </div>
+    </Card>
   )
+
+  // �💬 快速提问栏已移除(用户反馈不需要,对话页本身就一个输入框,不必重复)
 
   return (
     <div className="fluid-page">
@@ -632,30 +566,30 @@ export default function HomePage() {
       {/* 欢迎横幅 */}
       <div className="dash-hero">
         <h2 className="dash-hero__title">
-          你好，{user?.nickname || user?.username || '朋友'} 👋
+          你好,{user?.nickname || user?.username || '朋友'} 👋
         </h2>
         <p className="dash-hero__sub">
           {needsSetup
-            ? '只差一步就能开始：先配置一个对话大模型，下面有详细引导。'
-            : '欢迎使用彗记 Comet —— 你的个人 AI 知识库与记忆助手。让 AI 记住你、读懂你的资料。'}
+            ? '只差一步就能开始:先配置一个对话大模型,下面有详细引导。'
+            : '欢迎使用彗记 Comet —— 你的个人 AI 知识库与记忆助手。'}
         </p>
       </div>
 
       {needsSetup ? (
-        // 新用户态：聚焦引导，隐藏空的数据看板
+        // 新用户态:聚焦引导
         <>
           {quickStartCard}
           {featuresCard}
         </>
       ) : (
-        // 常用态：完整面板（已全部完成则不再显示引导卡）
+        // 常用态:心情条 + 今日回顾 + AI 洞察 + 最近研究 + (可选)未完成引导 + 功能一览
+        // 每个有条件卡片在没数据时自动不渲染,新用户不会看到空卡
         <>
           {reviewCard}
-          {briefingCard}
-          {loopHealthCard}
+          {insightsCard}
+          {recentResearchCard}
           {finishedSteps < quickSteps.length && quickStartCard}
           {featuresCard}
-          {dataSection}
         </>
       )}
     </div>

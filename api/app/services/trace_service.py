@@ -27,6 +27,7 @@ class TraceService:
         user_id: uuid.UUID,
         *,
         task_type: str | None,
+        task_id: uuid.UUID | None,
         status: str | None,
         days: int | None,
         limit: int,
@@ -35,6 +36,7 @@ class TraceService:
         rows, total = await self.repo.list_traces(
             user_id,
             task_type=task_type,
+            task_id=task_id,
             status=status,
             days=days,
             limit=limit,

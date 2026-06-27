@@ -30,6 +30,7 @@ class AgentTraceRepository:
         user_id: uuid.UUID,
         *,
         task_type: str | None = None,
+        task_id: uuid.UUID | None = None,
         status: str | None = None,
         days: int | None = None,
         limit: int = 50,
@@ -38,6 +39,8 @@ class AgentTraceRepository:
         conditions = [AgentTrace.user_id == user_id]
         if task_type:
             conditions.append(AgentTrace.task_type == task_type)
+        if task_id:
+            conditions.append(AgentTrace.task_id == task_id)
         if status:
             conditions.append(AgentTrace.status == status)
         if days and days > 0:

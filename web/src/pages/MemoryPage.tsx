@@ -93,6 +93,25 @@ export default function MemoryPage() {
     'profile' | 'community' | 'timeline' | 'search' | 'review'
   >('profile')
 
+  // 手机端用短标签,否则 5 个 4 字标签在窄屏会被挤成省略号
+  const [isMobile, setIsMobile] = useState(
+    () => typeof window !== 'undefined' && window.innerWidth <= 768,
+  )
+  useEffect(() => {
+    const mq = window.matchMedia('(max-width: 768px)')
+    const handler = (e: MediaQueryListEvent) => setIsMobile(e.matches)
+    mq.addEventListener('change', handler)
+    return () => mq.removeEventListener('change', handler)
+  }, [])
+
+  const tabOptions = [
+    { label: isMobile ? '画像' : '我的画像', value: 'profile', icon: <BulbOutlined /> },
+    { label: isMobile ? '社区' : '主题社区', value: 'community', icon: <ClusterOutlined /> },
+    { label: isMobile ? '时间' : '时间线', value: 'timeline', icon: <ClockCircleOutlined /> },
+    { label: isMobile ? '检索' : '记忆检索', value: 'search', icon: <SearchOutlined /> },
+    { label: isMobile ? '审查' : '审查纠错', value: 'review', icon: <AuditOutlined /> },
+  ]
+
   return (
     <div className="fluid-page">
       <Card
@@ -105,13 +124,7 @@ export default function MemoryPage() {
             onChange={(v) =>
               setMode(v as 'profile' | 'community' | 'timeline' | 'search' | 'review')
             }
-            options={[
-              { label: '我的画像', value: 'profile', icon: <BulbOutlined /> },
-              { label: '主题社区', value: 'community', icon: <ClusterOutlined /> },
-              { label: '时间线', value: 'timeline', icon: <ClockCircleOutlined /> },
-              { label: '记忆检索', value: 'search', icon: <SearchOutlined /> },
-              { label: '审查纠错', value: 'review', icon: <AuditOutlined /> },
-            ]}
+            options={tabOptions}
           />
         }
       >

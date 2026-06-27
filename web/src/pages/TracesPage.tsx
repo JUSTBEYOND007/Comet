@@ -365,11 +365,19 @@ export default function TracesPage() {
         onClose={closeDetail}
         title={
           detail ? (
-            <Space size={8}>
-              <Tag color={TASK_TYPE_COLORS[detail.task_type] || 'default'}>
+            <Space size={8} wrap style={{ maxWidth: '100%' }}>
+              <Tag color={TASK_TYPE_COLORS[detail.task_type] || 'default'} style={{ marginInlineEnd: 0 }}>
                 {TASK_TYPE_LABELS[detail.task_type] || detail.task_type}
               </Tag>
-              <span style={{ maxWidth: 360, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+              <span
+                style={{
+                  maxWidth: isMobile ? '60vw' : 360,
+                  overflow: 'hidden',
+                  textOverflow: 'ellipsis',
+                  whiteSpace: 'nowrap',
+                  fontSize: isMobile ? 15 : undefined,
+                }}
+              >
                 {detail.task_name || `Trace ${detail.trace_id.slice(0, 8)}`}
               </span>
               {detail.status === 'error' && <Tag color="error">失败</Tag>}

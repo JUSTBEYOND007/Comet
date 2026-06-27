@@ -44,9 +44,13 @@ api/
 │   │   ├── mcp_controller.py           # MCP Server 配置 + 工具发现/测试
 │   │   ├── emotion_controller.py       # 当前情绪画像 / 趋势 / 记录 / 分布
 │   │   ├── music_controller.py         # 音乐推荐 + 曲库 CRUD + 上传 + 音源解析 + 咪咕搜索
+│   │   ├── research_controller.py      # 深度研究 SSE 流式 + 列表/详情/删除/save-to-kb + 报告分享/导出(v0.0.4)
+│   │   ├── agent_task_controller.py    # 定时任务 CRUD + 运行历史 + 立即运行 + 未读红点(v0.0.4)
+│   │   ├── notify_controller.py        # 消息推送渠道 CRUD + 测试推送(v0.0.4)
+│   │   ├── trace_controller.py         # 执行轨迹列表/详情/成本聚合(v0.0.5)
 │   │   ├── search_controller.py        # 全局搜索
 │   │   ├── favorite_controller.py      # 收藏夹
-│   │   ├── dashboard_controller.py     # 统计概览 + 记忆趋势 + 每日回顾
+│   │   ├── dashboard_controller.py     # 统计概览 + 记忆趋势 + 每日回顾 + Loop 健康度 + 成本卡
 │   │   ├── file_controller.py          # 文件访问 /files/{key}
 │   │   └── health_controller.py        # /hello + /health（四存储连通性）
 │   │
@@ -56,7 +60,10 @@ api/
 │   ├── models/              # SQLAlchemy ORM 模型（users / model_configs / documents / images /
 │   │                        #   tags / memories / conversations / messages / agent_configs /
 │   │                        #   favorites / daily_reviews / message_feedbacks / tool_configs /
-│   │                        #   mcp_servers / emotion_records / emotion_profiles / songs）
+│   │                        #   mcp_servers / emotion_records / emotion_profiles / songs /
+│   │                        #   research_reports / agent_tasks / report_shares / notify_channels(v0.0.4)
+│   │                        #   loop_runs / loop_iterations / agent_traces / agent_spans /
+│   │                        #   memory_corrections(v0.0.5)）
 │   │
 │   ├── core/                # 【横切基础设施】
 │   │   ├── response.py      #   统一响应 success()/fail()
@@ -87,11 +94,14 @@ api/
 │   │   │   ├── retrieval/       # 图谱混合检索（向量 + 全文 + 邻居遍历）
 │   │   │   ├── clustering/      # 标签传播 LPA 社区聚类
 │   │   │   └── prompts/         # jinja2 提示词模板（纯中文）
-│   │   ├── agent/           #   智能问答 Agent（方案B）
+│   │   ├── agent/           #   智能问答 Agent（方案B）+ Loop Engineering + Tracing
 │   │   │   ├── tools/       #     工具体系：注册中心 + 知识库/记忆/联网/内置工具 + MCP 适配
 │   │   │   ├── web_search.py#     联网搜索（千帆 / tavily）
 │   │   │   ├── orchestrator.py # 强模型 function calling + 弱模型 ReAct 降级
-│   │   │   └── prompts/     #     ReAct + 提示词优化器 模板
+│   │   │   ├── research/    #     深度研究引擎(规划/检索/逐源提炼/反思/大纲/分节写作/汇总)(v0.0.4)
+│   │   │   ├── loop/        #     Verifier Loop 自闭环质量保障(controller/verifier/rubric/repair/policy/store/models)(v0.0.5)
+│   │   │   ├── tracing/     #     全链路可观测(tracer/span_recorder/pricing/otel_attrs/models)(v0.0.5)
+│   │   │   └── prompts/     #     ReAct + 提示词优化器 + research/loop 各 prompt 模板
 │   │   ├── emotion/         #   情绪记忆（valence-arousal）
 │   │   │   ├── ontology.py  #     13 类主情绪 + 参考坐标词表
 │   │   │   ├── analyzer.py  #     LLM 单轮情绪分析（重试 + 健壮解析 + 中性兜底）
@@ -247,15 +257,29 @@ uv run alembic upgrade head                          # 应用
 
 ### v0.0.3 新增表 / 字段
 
-- `knowledge_bases`（多知识库）+ `documents`/`images` 加 `kb_id`；`knowledge_bases` 加 `chat_enabled`。配套存量回填脚本：`uv run python -m app.db.backfill_kb`（建默认库 + 归入存量资料 + 回填 ES chunk 的 kb_id）。
+- `knowledge_bases`（多知识库）+ `documents`/`images` 加 `kb_id`；`knowledge_bases` 加 `chat_enabled`。配套存量回填脚本：`uv run python -m app.db.backfill_kb`(建默认库 + 归入存量资料 + 回填 ES chunk 的 kb_id)。
 - `agent_personas`（对话人格/角色卡）；`agent_configs` 加 `show_avatar` / `enable_active_recall` / `enable_cross_session`。
 - `skills`（技能）+ `enabled` 列。
 - `conversation_shares`（对话分享，含头像/快照 data URL 列）。
 - `conversations` 加 `is_group` / `member_persona_ids` / `enable_tools`，`messages` 加 `sender_persona_id`（群聊）。
 - `daily_reviews` 加 `care`（AI 主动关心）。
 - ASR 语音识别复用 `model_configs`，`type` 新增 `asr` 取值（String 列，**无迁移**）。
-- 反思引擎的 `Insight` 节点在 **Neo4j**（非 PG），由启动时图 schema 幂等创建，无 Alembic 迁移。
-> 后端启动时会自动执行 `alembic upgrade head`（`app/db/migrate.py`，在 lifespan 里）——本地首次仍建议手动跑一次确认无误。
+- 反思引擎的 `Insight` 节点在 **Neo4j**（非 PG），由启动时图 schema 幂等创建,无 Alembic 迁移。
+
+### v0.0.4 新增表 / 字段
+
+- `research_reports`(深度研究报告,迁移 `979c6e3c897f`)+ `agent_tasks`(定时任务,迁移 `e004fbfb8ac6`)。
+- `report_shares`(报告公开分享,迁移 `9d2abf6b960b`);`users` 加 `briefing_seen_at`(任务中心未读红点,迁移 `45e5059b4825`)。
+- `notify_channels`(消息推送渠道:Server酱 / 企微 / 钉钉 / webhook,target 字段 Fernet 加密)+ `agent_tasks.notify_enabled`(迁移 `2628f0e24602`)。
+- `agent_configs.human_mode`(真人对话模式全局开关,迁移 `bf7ad4190462`)。
+
+### v0.0.5 新增表 / 字段
+
+- **Verifier Loop**:`loop_runs` + `loop_iterations`(迁移 `7a3c4d5e6f01`),`model_configs.type` 加 `verifier` 取值(无 schema 迁移,Literal 扩展)。
+- **Tracing + 成本核算**:`agent_traces` + `agent_spans`(迁移 `6727223d45f9`),span 属性 JSONB 兼容 OpenTelemetry GenAI 规范字段名。
+- **记忆审查与人类反馈**:`memory_corrections`(迁移 `b8d195cf3e7a`);Neo4j Entity 加动态属性 `human_verified`(无 schema 变更)。
+
+> 后端启动时会自动执行 `alembic upgrade head`(`app/db/migrate.py`,在 lifespan 里)——本地首次仍建议手动跑一次确认无误。
 
 ---
 

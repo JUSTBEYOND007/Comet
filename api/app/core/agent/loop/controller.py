@@ -28,6 +28,13 @@ from app.core.agent.loop.repair import ChapterRewrite, PatchRepair
 from app.core.agent.loop.rubric import RUBRICS
 from app.core.agent.loop.store import LoopStore
 from app.core.agent.loop.verifier import Verifier, build_verifier
+from app.core.agent.tracing import get_tracer
+from app.core.agent.tracing.otel_attrs import (
+    COMET_LOOP_ITERATION_NO,
+    COMET_REPAIR_ACTION,
+    COMET_VERIFIER_KIND,
+    COMET_VERIFIER_RUBRIC,
+)
 from app.core.logging import get_logger
 from app.models.loop_model import (
     STATUS_EXCEEDED,
@@ -170,19 +177,35 @@ class LoopController:
             while True:
                 iteration_no += 1
                 t0 = time.time()
+                # 预生成 iteration_id,让 tracer 的 verifier/repair span 都能精确关联到这一轮
+                iter_id = uuid.uuid4()
+                tracer = get_tracer()
 
                 # 1. Verify
                 yield {"type": "loop_verify_start", "iteration": iteration_no}
                 try:
-                    score = await verifier.verify(
-                        topic=topic, artifact=artifact, rubric=self.rubric
-                    )
+                    async with tracer.span(
+                        f"verifier 第 {iteration_no} 轮",
+                        span_type="verifier",
+                        attributes={
+                            COMET_LOOP_ITERATION_NO: iteration_no,
+                            COMET_VERIFIER_KIND: verifier_kind,
+                            COMET_VERIFIER_RUBRIC: self.rubric_name,
+                        },
+                    ) as vsp:
+                        vsp.set_iteration_id(iter_id)
+                        score = await verifier.verify(
+                            topic=topic, artifact=artifact, rubric=self.rubric
+                        )
+                        vsp.set_payload("total_score", round(score.total, 4))
+                        vsp.set_payload("raw_scores", score.raw_scores)
                 except Exception as e:  # noqa: BLE001
                     # verifier 自身炸了:把这一轮视为「无法判定」,直接通过(避免无限循环)+ 标 note
                     logger.warning("verifier.verify 失败,跳出 loop: %s", e)
                     final_status = STATUS_PASSED
                     final_note = f"verifier 异常: {e}"
                     outcome = IterationOutcome(
+                        id=iter_id,
                         iteration_no=iteration_no,
                         artifact_snapshot=self._snapshot(artifact),
                         decision=DECISION_PASS,
@@ -218,6 +241,7 @@ class LoopController:
                 if decision == DECISION_PASS:
                     final_score = score.total
                     outcome = IterationOutcome(
+                        id=iter_id,
                         iteration_no=iteration_no,
                         artifact_snapshot=self._snapshot(artifact),
                         score=score,
@@ -232,6 +256,7 @@ class LoopController:
                     final_score = score.total
                     final_note = (score.feedback or {}).get("summary") or "超过最大迭代或问题面过广"
                     outcome = IterationOutcome(
+                        id=iter_id,
                         iteration_no=iteration_no,
                         artifact_snapshot=self._snapshot(artifact),
                         score=score,
@@ -248,6 +273,7 @@ class LoopController:
                     final_score = score.total
                     final_note = "policy 未提供 executor"
                     outcome = IterationOutcome(
+                        id=iter_id,
                         iteration_no=iteration_no,
                         artifact_snapshot=self._snapshot(artifact),
                         score=score,
@@ -268,6 +294,7 @@ class LoopController:
                 }
 
                 outcome = IterationOutcome(
+                    id=iter_id,
                     iteration_no=iteration_no,
                     artifact_snapshot=self._snapshot(artifact),
                     score=score,
@@ -277,17 +304,31 @@ class LoopController:
                 )
                 await self.store.record_iteration(run_id, outcome)
 
-                # 执行修复 → 新 artifact
+                # 执行修复 → 新 artifact(包一层 repair span,关联到本轮 iteration_id)
                 try:
-                    artifact = await executor.execute(
-                        action=action,
-                        artifact=artifact,
-                        ctx={
-                            "patch_callback": repair_ctx.patch_callback,
-                            "rewrite_callback": repair_ctx.rewrite_callback,
-                            **repair_ctx.extras,
+                    async with tracer.span(
+                        f"repair: {action.kind} 第 {iteration_no} 轮",
+                        span_type="repair",
+                        attributes={
+                            COMET_LOOP_ITERATION_NO: iteration_no,
+                            COMET_REPAIR_ACTION: action.kind,
                         },
-                    )
+                    ) as rsp:
+                        rsp.set_iteration_id(iter_id)
+                        rsp.set_payload("rationale", action.rationale[:200])
+                        if action.patch_queries:
+                            rsp.set_payload("patch_queries", action.patch_queries[:5])
+                        if action.rewrite_chapters:
+                            rsp.set_payload("rewrite_chapters", action.rewrite_chapters[:10])
+                        artifact = await executor.execute(
+                            action=action,
+                            artifact=artifact,
+                            ctx={
+                                "patch_callback": repair_ctx.patch_callback,
+                                "rewrite_callback": repair_ctx.rewrite_callback,
+                                **repair_ctx.extras,
+                            },
+                        )
                 except Exception as e:  # noqa: BLE001
                     logger.warning("repair.execute 失败,沿用旧 artifact 进入下轮 verify: %s", e)
 

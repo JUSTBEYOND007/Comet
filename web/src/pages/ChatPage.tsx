@@ -331,6 +331,7 @@ export default function ChatPage() {
           content: m.content,
           citations: m.meta_data?.citations,
           toolCalls: m.meta_data?.tool_calls,
+          traceId: m.meta_data?.trace_id,
           images: m.images,
           attachments: m.meta_data?.attachments?.map((a) => ({
             file_name: a.file_name,
@@ -726,6 +727,12 @@ export default function ChatPage() {
         onCitation: (cites) => {
           setMessages((prev) =>
             prev.map((m) => (m.id === aiMsg.id ? { ...m, citations: cites } : m)),
+          )
+        },
+        onTrace: (d) => {
+          // 这一轮对话的执行轨迹 id —— 给 AI 气泡加「查看执行轨迹」按钮用
+          setMessages((prev) =>
+            prev.map((m) => (m.id === aiMsg.id ? { ...m, traceId: d.trace_id } : m)),
           )
         },
         onDone: (d) => {

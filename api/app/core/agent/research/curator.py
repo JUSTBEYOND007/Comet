@@ -14,6 +14,7 @@ from app.core.agent.research.models import (
 )
 from app.config import settings
 from app.core.agent.research.prompt_renderer import render_research_prompt
+from app.core.agent.tracing import push_llm_usage
 from app.core.logging import get_logger
 from app.core.memory.json_utils import parse_json_object
 
@@ -77,6 +78,7 @@ async def curate_outline(
     )
     try:
         resp = await model.ainvoke(prompt)
+        push_llm_usage(resp, model)
         text = resp.content if isinstance(resp.content, str) else str(resp.content)
     except Exception as e:
         logger.warning("大纲整理 LLM 调用失败，降级字面分配: %s", e)

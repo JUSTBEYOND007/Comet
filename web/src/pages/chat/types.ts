@@ -16,6 +16,7 @@ export interface UiMessage {
   feedback?: 'up' | 'down' | null // 当前用户对该 AI 消息的反馈
   createdAt?: string // 消息时间（ISO 字符串）
   fromHistory?: boolean // 来自历史加载（非本次实时生成）→ 真人模式多气泡不重放动画，直接全显
+  traceId?: string // 这条 AI 消息所属对话回合的执行轨迹 id(供「执行轨迹」按钮跳转)
 }
 
 // 对话头像上下文：是否显示 + AI（当前角色）头像 + 用户头像

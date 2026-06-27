@@ -5,6 +5,7 @@ ORM 落库结构在 app.models.loop_model;这里是各模块间(rubric/verifier/
 """
 from __future__ import annotations
 
+import uuid
 from typing import Any
 
 from pydantic import BaseModel, Field
@@ -96,6 +97,7 @@ class RepairAction(BaseModel):
 class IterationOutcome(BaseModel):
     """单轮 generate→verify→decide 后的结果汇总(落库 + 上抛给 controller)。"""
 
+    id: uuid.UUID = Field(default_factory=uuid.uuid4)  # 提前生成,供 tracer 关联 iteration_id
     iteration_no: int
     artifact_snapshot: dict[str, Any] = Field(default_factory=dict)
     score: VerifyScore = Field(default_factory=VerifyScore)

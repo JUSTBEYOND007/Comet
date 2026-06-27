@@ -8,16 +8,14 @@
     uv run python -m eval.run_eval --only retrieval # 只跑某项 retrieval/extraction/dedup/memory
     uv run python -m eval.run_eval --teardown      # 跑完清理评测数据
 
-    # ①.5 公共评测基准(L2/L3/L4)—— 默认轻量,跑通流程 + 出方向性数据
+    # ①.5 公共评测基准(L2/L3)—— 默认轻量,跑通流程 + 出方向性数据
     uv run python -m eval.run_eval --benchmark cmteb-t2     # L2 中文检索(默认 corpus 1000/query 100,~10 分钟)
     uv run python -m eval.run_eval --benchmark hotpotqa     # L3 多跳推理(默认 100 题分层,~40 分钟)
-    uv run python -m eval.run_eval --benchmark longmemeval  # L4 长对话记忆(默认 20 题,~20 分钟)
-    uv run python -m eval.run_eval --benchmark all          # 三套都跑(轻量默认,合计约 1.5 小时)
+    uv run python -m eval.run_eval --benchmark all          # 两套都跑(轻量默认)
 
     # 想放大就显式传(出更稳的简历数据)
     uv run python -m eval.run_eval --benchmark cmteb-t2 --corpus-limit 3000 --query-limit 300
     uv run python -m eval.run_eval --benchmark hotpotqa --sample 200
-    uv run python -m eval.run_eval --benchmark longmemeval --lme-limit 50
 
 依赖:复制 eval/.env.eval.example 为 eval/.env.eval 并填模型 key(embedding 必需、chat 必需、rerank 可选)。
 存储用 docker-compose 起的 PG/ES/Neo4j/Redis。
@@ -127,7 +125,7 @@ async def _run_fixtures(args, embed, chat, rerank) -> None:
 async def _run_benchmark(args, embed, chat, rerank) -> None:
     """①.5 公共评测基准入口。"""
     name = args.benchmark
-    targets = ["cmteb-t2", "hotpotqa", "longmemeval"] if name == "all" else [name]
+    targets = ["cmteb-t2", "hotpotqa"] if name == "all" else [name]
     for bm in targets:
         print(f"\n========== ①.5 benchmark: {bm} ==========")
         if bm == "cmteb-t2":
@@ -147,13 +145,6 @@ async def _run_benchmark(args, embed, chat, rerank) -> None:
                 verifier=args.verifier,
                 seed=args.seed,
                 verifier_client_factory=eval_config.verifier_client,
-            )
-        elif bm == "longmemeval":
-            from eval.benchmarks.longmemeval import run_benchmark
-            await run_benchmark(
-                embed, chat,
-                subset=args.lme_subset,
-                limit=args.lme_limit,
             )
         else:
             print(f"  未知 benchmark: {bm}")
@@ -180,7 +171,7 @@ async def _run(args) -> None:
 
 
 def main() -> None:
-    p = argparse.ArgumentParser(description="Comet 离线评测(RAG + 记忆,L1 自制集 + L2/L3/L4 公共基准)")
+    p = argparse.ArgumentParser(description="Comet 离线评测(RAG + 记忆,L1 自制集 + L2/L3 公共基准)")
     # 通用
     p.add_argument("--skip-check", action="store_true", help="跳过模型可用性自检")
 
@@ -194,7 +185,7 @@ def main() -> None:
     # ①.5 公共基准开关
     p.add_argument(
         "--benchmark",
-        choices=["cmteb-t2", "hotpotqa", "longmemeval", "all"],
+        choices=["cmteb-t2", "hotpotqa", "all"],
         help="跑 ①.5 公共评测基准(指定后忽略 --only 等 L1 选项)",
     )
     # cmteb-t2 控制
@@ -210,11 +201,6 @@ def main() -> None:
     p.add_argument("--verifier", choices=["none", "same", "cross"], default="none",
                    help="[hotpotqa] Verifier 配置（等 ② Verifier Loop 完成后启用）")
     p.add_argument("--seed", type=int, default=42, help="[hotpotqa] 采样种子")
-    # longmemeval 控制
-    p.add_argument("--lme-subset", default="longmemeval_s",
-                   help="[longmemeval] 子集 longmemeval_s / longmemeval_m / longmemeval_oracle")
-    p.add_argument("--lme-limit", type=int, default=20,
-                   help="[longmemeval] 题数上限（默认 20，全量约 500 题极重）")
 
     asyncio.run(_run(p.parse_args()))
 

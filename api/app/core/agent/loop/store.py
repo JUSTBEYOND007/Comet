@@ -74,6 +74,7 @@ class LoopStore:
         """落库一轮迭代记录,同时更新 LoopRun 的 iterations 计数。"""
         try:
             it = LoopIteration(
+                id=outcome.id,  # 用 outcome 预生成的 id,便于 tracer span 关联
                 run_id=run_id,
                 iteration_no=outcome.iteration_no,
                 artifact_snapshot=outcome.artifact_snapshot,

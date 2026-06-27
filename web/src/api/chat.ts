@@ -63,6 +63,7 @@ export interface ChatMessage {
     tool_calls?: ToolCall[]
     attachments?: { file_name: string; text?: string }[]
     image_keys?: string[]
+    trace_id?: string  // 这一轮对话的执行轨迹 id(供「查看执行轨迹」按钮)
   } | null
   feedback?: 'up' | 'down' | null
   created_at: string
@@ -95,6 +96,8 @@ export interface StreamHandlers {
   onCitation?: (citations: Citation[]) => void
   onDone?: (d: { conversation_id: string; message_id?: string }) => void
   onError?: (message: string) => void
+  // 这一轮对话的执行轨迹 id(用于在 AI 气泡上直接展示「查看执行轨迹」按钮)
+  onTrace?: (d: { trace_id: string }) => void
   // 断线重连续传：补推已生成内容（content 为累积全文，需整体替换当前流式气泡）
   onResume?: (d: {
     content: string
@@ -637,6 +640,9 @@ function dispatchEvent(
       break
     case 'idle':
       handlers.onIdle?.()
+      break
+    case 'trace':
+      handlers.onTrace?.(payload as never)
       break
     case 'error':
       handlers.onError?.((payload.message as string) ?? '生成失败')

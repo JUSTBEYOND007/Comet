@@ -35,6 +35,7 @@ import { useGroupHeaderStore } from '@/stores/groupHeaderStore'
 import { agentTaskApi } from '@/api/agentTask'
 import { AuthenticatedImage } from '@/components/AuthenticatedImage'
 import MusicPlayer from '@/components/MusicPlayer'
+import { useMusicStore } from '@/stores/musicStore'
 import logo from '@/images/logo.png'
 
 const { Sider, Content, Header } = Layout
@@ -50,6 +51,7 @@ const menuItems = [
       { key: '/group-chat', icon: <TeamOutlined />, label: '群聊' },
       { key: '/research', icon: <FileSearchOutlined />, label: '深度研究' },
       { key: '/agent-tasks', icon: <ClockCircleOutlined />, label: '定时任务' },
+      { key: '/traces', icon: <HistoryOutlined />, label: '执行轨迹' },
     ],
   },
   {
@@ -154,6 +156,10 @@ export default function MainLayout() {
 
   // 音乐页沉浸式深色主题：进入 /music 整体变深色霓虹，离开自动恢复
   const immersive = location.pathname === '/music'
+
+  // 浮动音乐播放器:在非音乐页且播放器可见时,给主内容区底部留出避让空间,防止右下角被遮住
+  const playerVisible = useMusicStore((s) => s.visible)
+  const needPlayerPadding = playerVisible && !immersive
 
   const onLogout = async () => {
     await logout()
@@ -437,34 +443,40 @@ export default function MainLayout() {
             <Space align="center" style={{ cursor: 'pointer', flexShrink: 0 }}>
               {user?.avatar ? (
                 <AuthenticatedImage
-                  src={user.avatar}
-                  alt="头像"
-                  style={{
-                    width: 30,
-                    height: 30,
-                    borderRadius: '50%',
-                    objectFit: 'cover',
-                    display: 'block',
-                  }}
-                />
-              ) : (
-                <Avatar size={30} style={{ background: '#155EEF' }}>
-                  {user?.username?.[0]?.toUpperCase() ?? <UserOutlined />}
-                </Avatar>
-              )}
-              {!isMobile && (
-                <span style={{ fontWeight: 500, color: immersive ? '#fff' : undefined }}>
-                  {user?.nickname || user?.username || '用户'}
-                </span>
-              )}
-            </Space>
-          </Dropdown>
-        </Header>
-        <Content style={{ padding: isMobile ? 14 : 24, overflow: 'auto' }}>
-          <Outlet />
-        </Content>
+                    src={user.avatar}
+                    alt="头像"
+                    style={{
+                      width: 30,
+                      height: 30,
+                      borderRadius: '50%',
+                      objectFit: 'cover',
+                      display: 'block',
+                    }}
+                  />
+                ) : (
+                  <Avatar size={30} style={{ background: '#155EEF' }}>
+                    {user?.username?.[0]?.toUpperCase() ?? <UserOutlined />}
+                  </Avatar>
+                )}
+                {!isMobile && (
+                  <span style={{ fontWeight: 500, color: immersive ? '#fff' : undefined }}>
+                    {user?.nickname || user?.username || '用户'}
+                  </span>
+                )}
+              </Space>
+            </Dropdown>
+          </Header>
+          <Content
+            style={{
+              padding: isMobile ? 14 : 24,
+              paddingBottom: needPlayerPadding ? (isMobile ? 96 : 120) : undefined,
+              overflow: 'auto',
+            }}
+          >
+            <Outlet />
+          </Content>
+        </Layout>
+        <MusicPlayer />
       </Layout>
-      <MusicPlayer />
-    </Layout>
-  )
-}
+    )
+  }

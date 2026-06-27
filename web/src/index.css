@@ -2036,16 +2036,14 @@ body {
     flex: 1 1 0;
     min-width: 0;
   }
-  /* 手机端收紧标签内边距与字号，去掉图标右边距，保证一屏放下 */
+  /* 手机端:短标签(画像/社区/时间/检索/审查)+ 图标,5 等分一屏放下 */
   .memory-tabs.ant-segmented .ant-segmented-item-label {
-    padding: 0 2px;
+    padding: 0 4px;
     font-size: 12px;
-    overflow: hidden;
-    text-overflow: ellipsis;
     white-space: nowrap;
   }
   .memory-tabs.ant-segmented .ant-segmented-item-label .anticon {
-    margin-inline-end: 2px;
+    margin-inline-end: 3px;
   }
 }
 

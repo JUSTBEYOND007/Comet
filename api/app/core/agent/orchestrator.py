@@ -23,6 +23,7 @@ from langchain_core.tools import StructuredTool
 from langchain_openai import ChatOpenAI
 
 from app.core.agent.prompt_renderer import render_agent_prompt
+from app.core.agent.tracing import get_tracer
 from app.core.logging import get_logger
 
 logger = get_logger(__name__)
@@ -110,17 +111,56 @@ async def run_function_calling(
     # 同一轮内的工具调用结果缓存：(工具名+参数) 相同则复用上次结果，
     # 不再重复握手+执行（消除模型用相同参数重复调同一工具的浪费）。
     call_cache: dict[str, str] = {}
+    # 取真实 model_name 用于成本核算(LangChain ChatOpenAI 的 model_name 字段)
+    chat_model_name = getattr(model, "model_name", None) or getattr(model, "model", "chat")
+    tracer = get_tracer()
 
-    for _ in range(MAX_TOOL_ITERATIONS):
-        gathered = None
-        async for chunk in model_with_tools.astream(messages):
-            if chunk.content:
-                text = chunk.content if isinstance(chunk.content, str) else str(chunk.content)
-                full_text += text
-                yield {"type": "token", "text": text}
-            gathered = chunk if gathered is None else gathered + chunk
+    for iteration in range(MAX_TOOL_ITERATIONS):
+        # 每轮 LLM 流式调用包一个 llm_call span,流完后从 usage_metadata 抽 token
+        # 抓最后一条 user/tool 消息做请求摘要
+        last_msg_text = ""
+        for m in reversed(messages):
+            content = getattr(m, "content", None)
+            if isinstance(content, str) and content:
+                last_msg_text = content
+                break
+        async with tracer.llm_span(
+            f"chat:{chat_model_name} (轮 {iteration + 1})",
+            model_name=chat_model_name,
+            attributes={
+                "comet.chat.iteration": iteration + 1,
+                "comet.chat.tools_bound": len(tools),
+            },
+        ) as lsp:
+            lsp.set_payload("messages_count", len(messages))
+            if last_msg_text:
+                lsp.set_payload("request_summary", last_msg_text[:600])
+            gathered = None
+            iter_text = ""
+            async for chunk in model_with_tools.astream(messages):
+                if chunk.content:
+                    text = chunk.content if isinstance(chunk.content, str) else str(chunk.content)
+                    full_text += text
+                    iter_text += text
+                    yield {"type": "token", "text": text}
+                gathered = chunk if gathered is None else gathered + chunk
+            # 抽 token 用量(stream_usage=True 后流尾的 chunk 带 usage_metadata)
+            usage = getattr(gathered, "usage_metadata", None) or {}
+            in_t = int(usage.get("input_tokens", 0) or 0)
+            out_t = int(usage.get("output_tokens", 0) or 0)
+            cached = int((usage.get("input_token_details") or {}).get("cache_read", 0) or 0)
+            lsp.set_tokens(input=in_t, output=out_t, cached=cached, model_name=chat_model_name)
+            tool_calls = getattr(gathered, "tool_calls", None) or []
+            lsp.set_payload("tool_calls_count", len(tool_calls))
+            if iter_text:
+                lsp.set_payload("response_preview", iter_text[:600])
+            elif tool_calls:
+                # 没有文本输出但触发了工具:展示工具调用意图
+                lsp.set_payload(
+                    "response_preview",
+                    "(本轮无文字输出,触发工具:" + ", ".join(tc.get("name", "?") for tc in tool_calls[:5]) + ")",
+                )
 
-        tool_calls = getattr(gathered, "tool_calls", None) or []
         if not tool_calls:
             # 无工具调用 → 已是最终回答
             yield {"type": "final", "text": full_text}
@@ -164,11 +204,29 @@ async def run_function_calling(
                 observation = f"未知工具：{name}"
                 status = "error"
             else:
-                try:
-                    observation = await tool.ainvoke(args)
-                except Exception as e:
-                    observation = f"工具执行失败：{e}"
-                    status = "error"
+                tracer = get_tracer()
+                async with tracer.span(
+                    f"工具:{name}",
+                    span_type="tool_call",
+                    attributes={
+                        "comet.tool.name": name,
+                        "comet.tool.query": str(query)[:200],
+                    },
+                ) as tsp:
+                    try:
+                        observation = await tool.ainvoke(args)
+                    except Exception as e:
+                        observation = f"工具执行失败：{e}"
+                        status = "error"
+                        tsp.mark_error(str(e))
+                    obs_str = str(observation) if observation else ""
+                    tsp.set_payload("status", status)
+                    tsp.set_payload("output_chars", len(obs_str))
+                    if obs_str:
+                        # 工具返回内容前 600 字预览,供 trace 详情面板展示
+                        tsp.set_payload("output_preview", obs_str[:600])
+                    if query:
+                        tsp.set_payload("tool_query", str(query)[:300])
             latency_ms = int((time.monotonic() - t0) * 1000)
             stats = stats_holder.pop(name, {}) if stats_holder is not None else {}
             formatted = _format_observation(observation)
@@ -215,9 +273,25 @@ async def run_react(
     stats_holder = stats_holder if stats_holder is not None else {}
     # 同一轮内工具结果缓存（工具名+query 相同则复用）
     call_cache: dict[str, str] = {}
+    # 取真实 model_name 用于 token / cost 记账
+    react_model_name = getattr(model, "model_name", None) or getattr(model, "model", "chat")
+    tracer = get_tracer()
 
-    for _ in range(MAX_TOOL_ITERATIONS):
-        resp = await model.ainvoke(convo)
+    for iteration in range(MAX_TOOL_ITERATIONS):
+        async with tracer.llm_span(
+            f"chat(ReAct):{react_model_name} (轮 {iteration + 1})",
+            model_name=react_model_name,
+            attributes={
+                "comet.chat.iteration": iteration + 1,
+                "comet.chat.mode": "react",
+            },
+        ) as lsp:
+            resp = await model.ainvoke(convo)
+            usage = getattr(resp, "usage_metadata", None) or {}
+            in_t = int(usage.get("input_tokens", 0) or 0)
+            out_t = int(usage.get("output_tokens", 0) or 0)
+            cached = int((usage.get("input_token_details") or {}).get("cache_read", 0) or 0)
+            lsp.set_tokens(input=in_t, output=out_t, cached=cached, model_name=react_model_name)
         text = resp.content if isinstance(resp.content, str) else str(resp.content)
 
         final_match = _FINAL_RE.search(text)
@@ -263,11 +337,28 @@ async def run_react(
             observation = f"未知工具：{tool_name}"
             status = "error"
         else:
-            try:
-                observation = await tool.ainvoke({"query": query})
-            except Exception as e:
-                observation = f"工具执行失败：{e}"
-                status = "error"
+            tracer = get_tracer()
+            async with tracer.span(
+                f"工具:{tool_name}",
+                span_type="tool_call",
+                attributes={
+                    "comet.tool.name": tool_name,
+                    "comet.tool.query": str(query)[:200],
+                },
+            ) as tsp:
+                try:
+                    observation = await tool.ainvoke({"query": query})
+                except Exception as e:
+                    observation = f"工具执行失败：{e}"
+                    status = "error"
+                    tsp.mark_error(str(e))
+                obs_str = str(observation) if observation else ""
+                tsp.set_payload("status", status)
+                tsp.set_payload("output_chars", len(obs_str))
+                if obs_str:
+                    tsp.set_payload("output_preview", obs_str[:600])
+                if query:
+                    tsp.set_payload("tool_query", str(query)[:300])
         latency_ms = int((time.monotonic() - t0) * 1000)
         stats = stats_holder.pop(tool_name, {}) if stats_holder is not None else {}
         formatted = _format_observation(observation)

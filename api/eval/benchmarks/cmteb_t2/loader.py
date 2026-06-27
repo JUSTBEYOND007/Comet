@@ -53,8 +53,8 @@ def load(split: str = "dev", corpus_limit: int | None = None,
 
     cache_dir = str(cache_path("hf_datasets").parent)  # HF 自管缓存目录
 
-    # 加载 corpus
-    ds_corpus = load_dataset(_HF_REPO, "corpus", cache_dir=cache_dir, split="corpus")
+    # 加载 corpus(新 mteb/* 数据集每个 subset 的 split 都叫 `dev`,不再与 subset 同名)
+    ds_corpus = load_dataset(_HF_REPO, "corpus", cache_dir=cache_dir, split="dev")
     corpus: list[CMTEBCorpusItem] = []
     for i, row in enumerate(ds_corpus):
         if corpus_limit is not None and i >= corpus_limit:
@@ -66,15 +66,15 @@ def load(split: str = "dev", corpus_limit: int | None = None,
             "text": (row.get("text") or "").strip(),
         })
 
-    # 加载 queries（按 split）
-    ds_queries = load_dataset(_HF_REPO, "queries", cache_dir=cache_dir, split="queries")
+    # 加载 queries
+    ds_queries = load_dataset(_HF_REPO, "queries", cache_dir=cache_dir, split="dev")
     qmap: dict[str, str] = {}
     for row in ds_queries:
         qid = str(row.get("_id") or row.get("id"))
         qmap[qid] = (row.get("text") or "").strip()
 
-    # 加载 qrels（标注）—— 形如 {query-id, corpus-id, score}
-    ds_qrels = load_dataset(_HF_REPO, cache_dir=cache_dir, split=split)
+    # 加载 qrels(标注,default subset / dev split)—— 形如 {query-id, corpus-id, score}
+    ds_qrels = load_dataset(_HF_REPO, "default", cache_dir=cache_dir, split=split)
     qrel_by_query: dict[str, list[str]] = {}
     for row in ds_qrels:
         qid = str(row.get("query-id") or row.get("query_id"))

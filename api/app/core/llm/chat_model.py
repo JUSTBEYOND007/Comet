@@ -41,13 +41,18 @@ async def get_default_config_for_type(
 def build_chat_model(
     config: ModelConfig, *, temperature: float = 0.7, streaming: bool = True
 ) -> ChatOpenAI:
-    """按模型配置实例化 ChatOpenAI。"""
+    """按模型配置实例化 ChatOpenAI。
+
+    `stream_usage=True`:让流式响应在最后一个 chunk 带上 usage_metadata,
+    供 ③ Tracing 抽取 input/output tokens 算 cost。不开启的话流式调用没法记 token。
+    """
     return ChatOpenAI(
         model=config.model_name,
         api_key=decrypt_secret(config.api_key_encrypted),
         base_url=config.base_url.rstrip("/"),
         temperature=temperature,
         streaming=streaming,
+        stream_usage=True,
     )
 
 

@@ -32,6 +32,7 @@ from app.controllers import (
     skill_controller,
     tag_controller,
     tool_controller,
+    trace_controller,
 )
 
 api_router = APIRouter(prefix="/api")
@@ -62,3 +63,4 @@ api_router.include_router(notify_controller.router)
 api_router.include_router(skill_controller.router)
 api_router.include_router(conversation_share_controller.router)
 api_router.include_router(conversation_share_controller.public_router)
+api_router.include_router(trace_controller.router)

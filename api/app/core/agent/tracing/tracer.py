@@ -297,3 +297,33 @@ def current_span_iteration_id() -> uuid.UUID | None:
     """当前 span 的 loop iteration_id(verifier 调用前设置过)。"""
     sp = _current_span.get()
     return sp.iteration_id if sp else None
+
+
+def push_llm_usage(resp_or_msg: Any, model: Any = None) -> None:
+    """从 LangChain ChatOpenAI 的响应/聚合 chunk 抽 usage_metadata,
+    把 token 用量与 cost 累加到当前活动 span(planner/writer 等)。
+
+    用法:
+        async with tracer.span("planner"):
+            resp = await model.ainvoke(prompt)
+            push_llm_usage(resp, model)
+
+    比起每处都开 llm_call 子 span,这个方法直接把 token/cost 累加到外层语义 span(如「planner」/「writer」),
+    既不增加层级噪声,又能在 trace 详情看到「planner 这一步花了 N tokens / M 元」。
+    """
+    if resp_or_msg is None:
+        return
+    sp = _current_span.get()
+    if sp is None:
+        return
+    usage = getattr(resp_or_msg, "usage_metadata", None) or {}
+    if not usage:
+        return
+    in_t = int(usage.get("input_tokens", 0) or 0)
+    out_t = int(usage.get("output_tokens", 0) or 0)
+    cached = int((usage.get("input_token_details") or {}).get("cache_read", 0) or 0)
+    model_name = None
+    if model is not None:
+        model_name = getattr(model, "model_name", None) or getattr(model, "model", None)
+    handle = _SpanHandle(sp)
+    handle.set_tokens(input=in_t, output=out_t, cached=cached, model_name=model_name)

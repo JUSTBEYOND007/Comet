@@ -23,6 +23,7 @@ import ProfilePage from './pages/ProfilePage'
 import SharePage from './pages/SharePage'
 import ReportSharePage from './pages/ReportSharePage'
 import JoinGroupPage from './pages/JoinGroupPage'
+import TracesPage from './pages/TracesPage'
 import RequireAuth from './components/RequireAuth'
 
 // 阶段1：登录页 + 路由守卫；主布局需登录后访问
@@ -55,6 +56,7 @@ export default function App() {
           <Route path="music" element={<MusicLibraryPage />} />
           <Route path="search" element={<SearchPage />} />
           <Route path="favorites" element={<FavoritesPage />} />
+          <Route path="traces" element={<TracesPage />} />
           <Route path="profile" element={<ProfilePage />} />
           <Route path="settings/models" element={<ModelConfigPage />} />
           <Route path="settings/agent" element={<AgentConfigPage />} />

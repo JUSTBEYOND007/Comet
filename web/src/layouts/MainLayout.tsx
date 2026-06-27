@@ -51,6 +51,7 @@ const menuItems = [
       { key: '/group-chat', icon: <TeamOutlined />, label: '群聊' },
       { key: '/research', icon: <FileSearchOutlined />, label: '深度研究' },
       { key: '/agent-tasks', icon: <ClockCircleOutlined />, label: '定时任务' },
+      { key: '/traces', icon: <HistoryOutlined />, label: '执行轨迹' },
     ],
   },
   {

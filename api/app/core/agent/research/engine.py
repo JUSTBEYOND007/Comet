@@ -40,6 +40,7 @@ from app.core.agent.research.retriever import (
     get_websearch_config,
 )
 from app.core.agent.research.writer import summarize, write_section_stream
+from app.core.agent.tracing import get_tracer
 from app.core.logging import get_logger
 
 logger = get_logger(__name__)
@@ -179,280 +180,338 @@ async def run_research(
     )
 
     topic = (topic or "").strip()
-    try:
-        model, config = await build_default_chat_model(
-            session, user_id, temperature=0.4, streaming=True
-        )
-    except Exception as e:
-        yield {"type": "error", "message": str(e)}
-        return
-    supports_fc = supports_function_call(config)
-    ws = await get_websearch_config(session, user_id)
+    tracer = get_tracer()
+    async with tracer.trace(
+        user_id=user_id,
+        task_type="research",
+        task_id=report_id,
+        task_name=topic[:200] if topic else None,
+    ) as tctx:
+        # 给前端发个 trace_id 事件,供未来「查看执行轨迹」入口下钻
+        yield {"type": "trace", "trace_id": str(tctx.trace_id)}
 
-    # ── 1. 规划（多视角子问题）──
-    yield {"type": "status", "phase": "planning", "detail": "正在规划研究提纲与多视角检索策略…"}
-    plan = await make_plan(model, topic)
-    headings = [s.heading for s in plan.sections]
-    yield {
-        "type": "plan",
-        "title": plan.title,
-        "sections": [{"heading": s.heading, "points": s.points} for s in plan.sections],
-        "queries": plan.queries,
-    }
-
-    # ── 检索辅助（一轮：四源并行 + 续编引用号）──
-    async def _retrieve(emit, queries: list[str], start_index: int) -> list[Source]:
-        collected: list[Source] = []
-        if ws:
-            provider, api_key = ws
-            try:
-                collected += await gather_web_sources(provider, api_key, queries, emit=emit)
-            except Exception as e:
-                logger.warning("研究联网检索整体失败（继续）: %s", e)
         try:
-            collected += await gather_kb_sources(session, user_id, queries, kb_ids, emit=emit)
-        except Exception as e:
-            logger.warning("研究知识库检索整体失败（继续）: %s", e)
-        try:
-            collected += await gather_mcp_sources(
-                session, user_id, topic, model, supports_fc, emit=emit
+            model, config = await build_default_chat_model(
+                session, user_id, temperature=0.4, streaming=True
             )
         except Exception as e:
-            logger.warning("研究 MCP 增强整体失败（继续）: %s", e)
-        return assign_indices(collected, start=start_index)
+            yield {"type": "error", "message": str(e)}
+            return
+        supports_fc = supports_function_call(config)
+        ws = await get_websearch_config(session, user_id)
 
-    # ── 2. 检索（第一轮）──
-    yield {
-        "type": "status",
-        "phase": "searching",
-        "detail": f"正在围绕 {len(plan.queries)} 个角度检索并抓取资料…",
-    }
-    h1: dict = {}
-    async for ev in _pump(h1, lambda emit: _retrieve(emit, plan.queries, 1)):
-        yield ev
-    sources: list[Source] = h1.get("result") or []
-    yield {"type": "sources", "sources": _source_brief(sources)}
+        # ── 1. 规划（多视角子问题）──
+        yield {"type": "status", "phase": "planning", "detail": "正在规划研究提纲与多视角检索策略…"}
+        async with tracer.span("规划:多视角子问题", span_type="planner") as sp:
+            plan = await make_plan(model, topic)
+            sp.set_attribute("section_count", len(plan.sections))
+            sp.set_attribute("query_count", len(plan.queries))
+        headings = [s.heading for s in plan.sections]
+        yield {
+            "type": "plan",
+            "title": plan.title,
+            "sections": [{"heading": s.heading, "points": s.points} for s in plan.sections],
+            "queries": plan.queries,
+        }
 
-    # ── 3. 逐源提炼（v2 核心：原始资料 → 带来源号的要点）──
-    yield {
-        "type": "status",
-        "phase": "distilling",
-        "detail": f"正在从 {len(sources)} 个来源提炼关键要点…",
-    }
-    h2: dict = {}
-    async for ev in _pump(
-        h2, lambda emit: distill_sources(model, topic, headings, sources, emit=emit)
-    ):
-        yield ev
-    learnings: list[Learning] = h2.get("result") or []
+        # ── 检索辅助（一轮：四源并行 + 续编引用号）──
+        async def _retrieve(emit, queries: list[str], start_index: int) -> list[Source]:
+            async with tracer.span(
+                f"检索:{len(queries)} 个角度",
+                span_type="retriever",
+                attributes={"comet.retrieval.query_count": len(queries)},
+            ) as rsp:
+                collected: list[Source] = []
+                if ws:
+                    provider, api_key = ws
+                    try:
+                        async with tracer.span("检索:联网", span_type="tool_call", attributes={"comet.tool.name": "web_search", "comet.tool.provider": provider}):
+                            collected += await gather_web_sources(provider, api_key, queries, emit=emit)
+                    except Exception as e:
+                        logger.warning("研究联网检索整体失败（继续）: %s", e)
+                try:
+                    async with tracer.span("检索:知识库", span_type="tool_call", attributes={"comet.tool.name": "kb_search"}):
+                        collected += await gather_kb_sources(session, user_id, queries, kb_ids, emit=emit)
+                except Exception as e:
+                    logger.warning("研究知识库检索整体失败（继续）: %s", e)
+                try:
+                    async with tracer.span("检索:MCP 增强", span_type="mcp_call", attributes={"comet.tool.name": "mcp_research"}):
+                        collected += await gather_mcp_sources(
+                            session, user_id, topic, model, supports_fc, emit=emit
+                        )
+                except Exception as e:
+                    logger.warning("研究 MCP 增强整体失败（继续）: %s", e)
+                rsp.set_payload("source_count", len(collected))
+                return assign_indices(collected, start=start_index)
 
-    # ── 4. 反思补搜（找缺口 → 补一轮检索+提炼，可配关闭）──
-    if settings.research_reflection_rounds > 0 and learnings:
-        yield {"type": "status", "phase": "reflecting", "detail": "正在评估信息缺口…"}
-        gap_queries = await find_gap_queries(model, topic, plan.sections, learnings)
-        if gap_queries:
-            yield {
-                "type": "status",
-                "phase": "reflecting",
-                "detail": f"补充检索 {len(gap_queries)} 个缺口角度…",
-            }
-            h3: dict = {}
-            async for ev in _pump(
-                h3, lambda emit: _retrieve(emit, gap_queries, len(sources) + 1)
-            ):
-                yield ev
-            extra_sources: list[Source] = h3.get("result") or []
-            if extra_sources:
-                sources += extra_sources
-                yield {"type": "sources", "sources": _source_brief(sources)}
-                h4: dict = {}
-                async for ev in _pump(
-                    h4,
-                    lambda emit: distill_sources(
-                        model, topic, headings, extra_sources, emit=emit
-                    ),
-                ):
-                    yield ev
-                learnings += h4.get("result") or []
-
-    # 全局要点截断（按相关度），并赋全局编号供大纲整理引用
-    learnings.sort(key=lambda x: x.relevance, reverse=True)
-    learnings = learnings[: settings.research_max_learnings]
-
-    # ── 5. 大纲整理（要点 → 每节核心论点 + 证据分配）──
-    yield {"type": "status", "phase": "curating", "detail": "正在整理大纲、分配论据…"}
-    curated = await curate_outline(model, topic, plan.sections, learnings)
-
-    # ── 6. 分章节写作（吃分配的要点 + 前文摘要避免重复）──
-    written: list[tuple[str, str]] = []
-    prev_summaries: list[str] = []
-    total = len(curated)
-    for i, sec in enumerate(curated, 1):
-        sec_learnings = [
-            learnings[lid - 1] for lid in sec.learning_ids if 1 <= lid <= len(learnings)
-        ]
+        # ── 2. 检索（第一轮）──
         yield {
             "type": "status",
-            "phase": "writing",
-            "detail": f"正在撰写第 {i}/{total} 节：{sec.heading}",
+            "phase": "searching",
+            "detail": f"正在围绕 {len(plan.queries)} 个角度检索并抓取资料…",
         }
-        yield {"type": "section_start", "heading": sec.heading}
-        buf: list[str] = []
-        async for tok in write_section_stream(
-            model, plan.title, sec.heading, sec.thesis, sec_learnings, prev_summaries
+        h1: dict = {}
+        async for ev in _pump(h1, lambda emit: _retrieve(emit, plan.queries, 1)):
+            yield ev
+        sources: list[Source] = h1.get("result") or []
+        yield {"type": "sources", "sources": _source_brief(sources)}
+
+        # ── 3. 逐源提炼（v2 核心：原始资料 → 带来源号的要点）──
+        yield {
+            "type": "status",
+            "phase": "distilling",
+            "detail": f"正在从 {len(sources)} 个来源提炼关键要点…",
+        }
+        h2: dict = {}
+        async with tracer.span(
+            f"逐源提炼:{len(sources)} 个来源",
+            span_type="writer",
+            attributes={"comet.distill.source_count": len(sources)},
+        ) as dsp:
+            async for ev in _pump(
+                h2, lambda emit: distill_sources(model, topic, headings, sources, emit=emit)
+            ):
+                yield ev
+            dsp.set_payload("learning_count", len(h2.get("result") or []))
+        learnings: list[Learning] = h2.get("result") or []
+
+        # ── 4. 反思补搜（找缺口 → 补一轮检索+提炼，可配关闭）──
+        if settings.research_reflection_rounds > 0 and learnings:
+            yield {"type": "status", "phase": "reflecting", "detail": "正在评估信息缺口…"}
+            async with tracer.span("反思:找缺口子查询", span_type="planner") as fsp:
+                gap_queries = await find_gap_queries(model, topic, plan.sections, learnings)
+                fsp.set_payload("gap_query_count", len(gap_queries or []))
+            if gap_queries:
+                yield {
+                    "type": "status",
+                    "phase": "reflecting",
+                    "detail": f"补充检索 {len(gap_queries)} 个缺口角度…",
+                }
+                h3: dict = {}
+                async for ev in _pump(
+                    h3, lambda emit: _retrieve(emit, gap_queries, len(sources) + 1)
+                ):
+                    yield ev
+                extra_sources: list[Source] = h3.get("result") or []
+                if extra_sources:
+                    sources += extra_sources
+                    yield {"type": "sources", "sources": _source_brief(sources)}
+                    h4: dict = {}
+                    async with tracer.span(
+                        f"补提炼:{len(extra_sources)} 个新来源",
+                        span_type="writer",
+                    ):
+                        async for ev in _pump(
+                            h4,
+                            lambda emit: distill_sources(
+                                model, topic, headings, extra_sources, emit=emit
+                            ),
+                        ):
+                            yield ev
+                    learnings += h4.get("result") or []
+
+        # 全局要点截断（按相关度），并赋全局编号供大纲整理引用
+        learnings.sort(key=lambda x: x.relevance, reverse=True)
+        learnings = learnings[: settings.research_max_learnings]
+
+        # ── 5. 大纲整理（要点 → 每节核心论点 + 证据分配）──
+        yield {"type": "status", "phase": "curating", "detail": "正在整理大纲、分配论据…"}
+        async with tracer.span(
+            "大纲整理:论点+证据分配",
+            span_type="planner",
+            attributes={
+                "comet.curator.section_count": len(plan.sections),
+                "comet.curator.learning_count": len(learnings),
+            },
         ):
-            buf.append(tok)
-            yield {"type": "token", "text": tok}
-        content = "".join(buf).strip() or "（本章节暂无内容）"
-        written.append((sec.heading, content))
-        prev_summaries.append(f"{sec.heading}：{sec.thesis or '（见正文）'}")
-        yield {"type": "section_done", "heading": sec.heading}
+            curated = await curate_outline(model, topic, plan.sections, learnings)
 
-    # ── 7. 汇总 ──
-    yield {"type": "status", "phase": "summarizing", "detail": "正在提炼摘要与核心要点…"}
-    body = "\n\n".join(f"## {h}\n{c}" for h, c in written)
-    summary = await summarize(model, plan.title, body)
+        # ── 6. 分章节写作（吃分配的要点 + 前文摘要避免重复）──
+        written: list[tuple[str, str]] = []
+        prev_summaries: list[str] = []
+        total = len(curated)
+        for i, sec in enumerate(curated, 1):
+            sec_learnings = [
+                learnings[lid - 1] for lid in sec.learning_ids if 1 <= lid <= len(learnings)
+            ]
+            yield {
+                "type": "status",
+                "phase": "writing",
+                "detail": f"正在撰写第 {i}/{total} 节：{sec.heading}",
+            }
+            yield {"type": "section_start", "heading": sec.heading}
+            buf: list[str] = []
+            async with tracer.span(
+                f"写章节 {i}/{total}: {sec.heading}", span_type="writer"
+            ) as wsp:
+                wsp.set_attribute("section_index", i)
+                wsp.set_attribute("section_total", total)
+                wsp.set_attribute("learning_count", len(sec_learnings))
+                async for tok in write_section_stream(
+                    model, plan.title, sec.heading, sec.thesis, sec_learnings, prev_summaries
+                ):
+                    buf.append(tok)
+                    yield {"type": "token", "text": tok}
+                content = "".join(buf).strip() or "（本章节暂无内容）"
+                wsp.set_payload("content_chars", len(content))
+            written.append((sec.heading, content))
+            prev_summaries.append(f"{sec.heading}：{sec.thesis or '（见正文）'}")
+            yield {"type": "section_done", "heading": sec.heading}
 
-    # ── 8. 拼装 + 引用映射 ──
-    markdown = _build_markdown(plan.title, summary, written, sources)
+        # ── 7. 汇总 ──
+        yield {"type": "status", "phase": "summarizing", "detail": "正在提炼摘要与核心要点…"}
+        async with tracer.span("汇总:摘要与核心要点", span_type="writer"):
+            body = "\n\n".join(f"## {h}\n{c}" for h, c in written)
+            summary = await summarize(model, plan.title, body)
 
-    # ── 9. Verifier Loop(V0.0.5 ②):独立 LLM-as-judge 复核 + 不合格 Patch/Rewrite 回炉 ──
-    final_markdown = markdown
-    final_sources = list(sources)
-    if not settings.loop_enabled:
-        # 开关关闭:跳过质量复核,行为与 v2 原流程一致
+        # ── 8. 拼装 + 引用映射 ──
+        markdown = _build_markdown(plan.title, summary, written, sources)
+
+        # ── 9. Verifier Loop(V0.0.5 ②):独立 LLM-as-judge 复核 + 不合格 Patch/Rewrite 回炉 ──
+        final_markdown = markdown
+        final_sources = list(sources)
+        if not settings.loop_enabled:
+            # 开关关闭:跳过质量复核,行为与 v2 原流程一致
+            yield {
+                "type": "report",
+                "title": plan.title,
+                "markdown": final_markdown,
+                "sources": [
+                    {"index": s.index, "type": s.type, "title": s.title, "url": s.url}
+                    for s in final_sources
+                ],
+            }
+            return
+
+        # ── 闭包内可变状态(给 callback 用,可跨多轮累加 sources/learnings 与重写章节)──
+        loop_sources: list[Source] = list(sources)
+        loop_learnings: list[Learning] = list(learnings)
+        loop_written: list[tuple[str, str]] = list(written)
+        loop_summary: dict = dict(summary or {})
+
+        def _rebuild_artifact() -> dict[str, Any]:
+            md = _build_markdown(plan.title, loop_summary, loop_written, loop_sources)
+            return {
+                "title": plan.title,
+                "markdown": md,
+                "sources": [
+                    {"index": s.index, "type": s.type, "title": s.title, "url": s.url}
+                    for s in loop_sources
+                ],
+                "headings": [h for h, _ in loop_written],
+            }
+
+        initial_artifact = _rebuild_artifact()
+
+        async def patch_callback(queries: list[str]) -> dict[str, Any]:
+            """Patch:用 verifier 给的子查询补搜补提炼,把新要点作为「补充信息」追加到报告。"""
+            try:
+                new_sources = await _retrieve(None, queries, len(loop_sources) + 1)
+                if not new_sources:
+                    return _rebuild_artifact()
+                loop_sources.extend(new_sources)
+                new_learnings = await distill_sources(
+                    model, topic, [h for h, _ in loop_written], new_sources, emit=None
+                )
+                if not new_learnings:
+                    return _rebuild_artifact()
+                loop_learnings.extend(new_learnings)
+                # 简化合并:把新要点整理为一个「补充信息」章节追加(避免重写正文章节,成本低)
+                supp_heading = "补充信息(质量复核反馈后追加)"
+                supp_lines = [
+                    f"- {le.text} [来源 {le.source_index}]" for le in new_learnings
+                ]
+                supp_content = "\n".join(supp_lines) if supp_lines else "(无补充)"
+                # 替换或追加
+                idx = next(
+                    (i for i, (h, _) in enumerate(loop_written) if h == supp_heading), None
+                )
+                if idx is None:
+                    loop_written.append((supp_heading, supp_content))
+                else:
+                    loop_written[idx] = (
+                        supp_heading,
+                        (loop_written[idx][1] + "\n" + supp_content).strip(),
+                    )
+                return _rebuild_artifact()
+            except Exception as e:  # noqa: BLE001
+                logger.warning("patch_callback 失败,沿用旧报告: %s", e)
+                return _rebuild_artifact()
+
+        async def rewrite_callback(chapters: list[str]) -> dict[str, Any]:
+            """Rewrite:重写指定章节(用 curated thesis + 已有 learnings 重新调 writer)。"""
+            try:
+                heading_to_curated = {c.heading: c for c in curated}
+                for ch in chapters:
+                    cur = heading_to_curated.get(ch)
+                    if cur is None:
+                        continue
+                    sec_learnings = [
+                        loop_learnings[lid - 1]
+                        for lid in cur.learning_ids
+                        if 1 <= lid <= len(loop_learnings)
+                    ]
+                    buf: list[str] = []
+                    async for tok in write_section_stream(
+                        model, plan.title, cur.heading, cur.thesis, sec_learnings, []
+                    ):
+                        buf.append(tok)
+                    new_content = "".join(buf).strip() or "(本章节暂无内容)"
+                    idx = next(
+                        (i for i, (h, _) in enumerate(loop_written) if h == ch), None
+                    )
+                    if idx is not None:
+                        loop_written[idx] = (ch, new_content)
+                return _rebuild_artifact()
+            except Exception as e:  # noqa: BLE001
+                logger.warning("rewrite_callback 失败,沿用旧报告: %s", e)
+                return _rebuild_artifact()
+
+        # 跑 LoopController:产出 loop_started / loop_verify_start/done / loop_repair_start/done / loop_finished 事件
+        try:
+            controller = LoopController(
+                session=session,
+                user_id=user_id,
+                task_type="research",
+                task_id=report_id,
+                max_iterations=settings.loop_max_iterations,
+            )
+            async for ev in controller.run(
+                topic=topic,
+                initial_artifact=initial_artifact,
+                verifier_kind=settings.loop_verifier_kind,
+                generator_model=model,
+                generator_model_name=getattr(config, "model_name", "") or "",
+                repair_ctx=RepairCallbackArgs(
+                    patch_callback=patch_callback,
+                    rewrite_callback=rewrite_callback,
+                ),
+            ):
+                # 拿到 loop_started.run_id 后,把 trace 关联到 LoopRun(便于报告页下钻执行轨迹)
+                if ev.get("type") == "loop_started":
+                    try:
+                        run_id_str = ev.get("run_id")
+                        if run_id_str:
+                            tctx.set_loop_run_id(uuid.UUID(run_id_str))
+                    except Exception:
+                        pass
+                if ev.get("type") == "loop_finished":
+                    final = ev.get("final_artifact") or {}
+                    final_markdown = final.get("markdown") or final_markdown
+                yield ev
+        except Exception as e:  # noqa: BLE001
+            # Loop 整体异常:沿用原报告,业务不阻断
+            logger.warning("Verifier Loop 运行异常,沿用原报告: %s", e, exc_info=True)
+
         yield {
             "type": "report",
             "title": plan.title,
             "markdown": final_markdown,
             "sources": [
                 {"index": s.index, "type": s.type, "title": s.title, "url": s.url}
-                for s in final_sources
-            ],
-        }
-        return
-
-    # ── 闭包内可变状态(给 callback 用,可跨多轮累加 sources/learnings 与重写章节)──
-    loop_sources: list[Source] = list(sources)
-    loop_learnings: list[Learning] = list(learnings)
-    loop_written: list[tuple[str, str]] = list(written)
-    loop_summary: dict = dict(summary or {})
-
-    def _rebuild_artifact() -> dict[str, Any]:
-        md = _build_markdown(plan.title, loop_summary, loop_written, loop_sources)
-        return {
-            "title": plan.title,
-            "markdown": md,
-            "sources": [
-                {"index": s.index, "type": s.type, "title": s.title, "url": s.url}
                 for s in loop_sources
             ],
-            "headings": [h for h, _ in loop_written],
         }
-
-    initial_artifact = _rebuild_artifact()
-
-    async def patch_callback(queries: list[str]) -> dict[str, Any]:
-        """Patch:用 verifier 给的子查询补搜补提炼,把新要点作为「补充信息」追加到报告。"""
-        try:
-            new_sources = await _retrieve(None, queries, len(loop_sources) + 1)
-            if not new_sources:
-                return _rebuild_artifact()
-            loop_sources.extend(new_sources)
-            new_learnings = await distill_sources(
-                model, topic, [h for h, _ in loop_written], new_sources, emit=None
-            )
-            if not new_learnings:
-                return _rebuild_artifact()
-            loop_learnings.extend(new_learnings)
-            # 简化合并:把新要点整理为一个「补充信息」章节追加(避免重写正文章节,成本低)
-            supp_heading = "补充信息(质量复核反馈后追加)"
-            supp_lines = [
-                f"- {le.text} [来源 {le.source_index}]" for le in new_learnings
-            ]
-            supp_content = "\n".join(supp_lines) if supp_lines else "(无补充)"
-            # 替换或追加
-            idx = next(
-                (i for i, (h, _) in enumerate(loop_written) if h == supp_heading), None
-            )
-            if idx is None:
-                loop_written.append((supp_heading, supp_content))
-            else:
-                loop_written[idx] = (
-                    supp_heading,
-                    (loop_written[idx][1] + "\n" + supp_content).strip(),
-                )
-            return _rebuild_artifact()
-        except Exception as e:  # noqa: BLE001
-            logger.warning("patch_callback 失败,沿用旧报告: %s", e)
-            return _rebuild_artifact()
-
-    async def rewrite_callback(chapters: list[str]) -> dict[str, Any]:
-        """Rewrite:重写指定章节(用 curated thesis + 已有 learnings 重新调 writer)。"""
-        try:
-            heading_to_curated = {c.heading: c for c in curated}
-            for ch in chapters:
-                cur = heading_to_curated.get(ch)
-                if cur is None:
-                    continue
-                sec_learnings = [
-                    loop_learnings[lid - 1]
-                    for lid in cur.learning_ids
-                    if 1 <= lid <= len(loop_learnings)
-                ]
-                buf: list[str] = []
-                async for tok in write_section_stream(
-                    model, plan.title, cur.heading, cur.thesis, sec_learnings, []
-                ):
-                    buf.append(tok)
-                new_content = "".join(buf).strip() or "(本章节暂无内容)"
-                idx = next(
-                    (i for i, (h, _) in enumerate(loop_written) if h == ch), None
-                )
-                if idx is not None:
-                    loop_written[idx] = (ch, new_content)
-            return _rebuild_artifact()
-        except Exception as e:  # noqa: BLE001
-            logger.warning("rewrite_callback 失败,沿用旧报告: %s", e)
-            return _rebuild_artifact()
-
-    # 跑 LoopController:产出 loop_started / loop_verify_start/done / loop_repair_start/done / loop_finished 事件
-    try:
-        controller = LoopController(
-            session=session,
-            user_id=user_id,
-            task_type="research",
-            task_id=report_id,
-            max_iterations=settings.loop_max_iterations,
-        )
-        async for ev in controller.run(
-            topic=topic,
-            initial_artifact=initial_artifact,
-            verifier_kind=settings.loop_verifier_kind,
-            generator_model=model,
-            generator_model_name=getattr(config, "model_name", "") or "",
-            repair_ctx=RepairCallbackArgs(
-                patch_callback=patch_callback,
-                rewrite_callback=rewrite_callback,
-            ),
-        ):
-            if ev.get("type") == "loop_finished":
-                final = ev.get("final_artifact") or {}
-                final_markdown = final.get("markdown") or final_markdown
-            yield ev
-    except Exception as e:  # noqa: BLE001
-        # Loop 整体异常:沿用原报告,业务不阻断
-        logger.warning("Verifier Loop 运行异常,沿用原报告: %s", e, exc_info=True)
-
-    yield {
-        "type": "report",
-        "title": plan.title,
-        "markdown": final_markdown,
-        "sources": [
-            {"index": s.index, "type": s.type, "title": s.title, "url": s.url}
-            for s in loop_sources
-        ],
-    }
 
 
 __all__ = ["run_research"]

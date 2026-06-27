@@ -10,6 +10,7 @@ from langchain_openai import ChatOpenAI
 
 from app.core.agent.research.models import Learning
 from app.core.agent.research.prompt_renderer import render_research_prompt
+from app.core.agent.tracing import push_llm_usage
 from app.core.logging import get_logger
 from app.core.memory.json_utils import parse_json_object
 
@@ -43,12 +44,15 @@ async def write_section_stream(
     )
     got = False
     try:
+        gathered = None
         async for chunk in model.astream(prompt):
             if chunk.content:
                 text = chunk.content if isinstance(chunk.content, str) else str(chunk.content)
                 if text:
                     got = True
                     yield text
+            gathered = chunk if gathered is None else gathered + chunk
+        push_llm_usage(gathered, model)
     except Exception as e:
         logger.warning("章节撰写失败: heading=%s err=%s", heading, e)
         if not got:
@@ -62,6 +66,7 @@ async def summarize(model: ChatOpenAI, report_title: str, body: str) -> dict:
     )
     try:
         resp = await model.ainvoke(prompt)
+        push_llm_usage(resp, model)
         text = resp.content if isinstance(resp.content, str) else str(resp.content)
     except Exception as e:
         logger.warning("研究汇总 LLM 调用失败: %s", e)

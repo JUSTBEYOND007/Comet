@@ -12,6 +12,7 @@ from langchain_openai import ChatOpenAI
 from app.config import settings
 from app.core.agent.research.models import Learning, Source
 from app.core.agent.research.prompt_renderer import render_research_prompt
+from app.core.agent.tracing import push_llm_usage
 from app.core.logging import get_logger
 from app.core.memory.json_utils import parse_json_object
 
@@ -40,6 +41,7 @@ async def _distill_one(
     )
     try:
         resp = await model.ainvoke(prompt)
+        push_llm_usage(resp, model)
         text = resp.content if isinstance(resp.content, str) else str(resp.content)
     except Exception as e:
         logger.warning("提炼来源失败（跳过）: idx=%s err=%s", source.index, e)

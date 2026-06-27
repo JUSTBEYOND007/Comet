@@ -5460,3 +5460,14 @@ body {
     margin-right: 4px;
   }
 }
+
+
+/* ── Trace 视图通用动画 ── */
+@keyframes pulse {
+  0%, 100% { box-shadow: 0 0 0 3px rgba(22, 119, 255, 0.18); }
+  50%      { box-shadow: 0 0 0 6px rgba(22, 119, 255, 0.08); }
+}
+@keyframes fadeInDown {
+  from { opacity: 0; transform: translateY(-4px); }
+  to   { opacity: 1; transform: translateY(0); }
+}

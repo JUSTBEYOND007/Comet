@@ -17,11 +17,12 @@ from app.core.agent.tracing.models import (
     SpanRecord,
     TraceRecord,
 )
-from app.core.agent.tracing.tracer import Tracer, get_tracer
+from app.core.agent.tracing.tracer import Tracer, get_tracer, push_llm_usage
 
 __all__ = [
     "SpanRecord",
     "TraceRecord",
     "Tracer",
     "get_tracer",
+    "push_llm_usage",
 ]
